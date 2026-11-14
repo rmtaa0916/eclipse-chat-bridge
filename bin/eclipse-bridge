@@ -1,19 +1,38 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# ECLIPSE Chat Bridge Control CLI
+# ECLIPSE Chat Bridge Control CLI & Interactive Dashboard
 # Manages the automated Google Docs -> Termux local execution bridge.
 # ==============================================================================
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${REAL_SCRIPT}")/.." && pwd)"
 WATCH_SCRIPT="${SCRIPT_DIR}/watch.py"
 STATE_DIR="${ECLIPSE_BRIDGE_STATE:-/root/.local/state/eclipse-chat-bridge}"
 LOG_FILE="${STATE_DIR}/watcher.log"
 PID_FILE="${STATE_DIR}/watcher.pid"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+DOC_ID="${ECLIPSE_DOC_ID:-1N_TYeHUTexHaU2eiZ40hMWsaNNl-GaZJ-6H1MxHPPYM}"
 
 mkdir -p "${STATE_DIR}"
+
+# Color formatting if terminal supports it
+if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+  BOLD="$(tput bold || true)"
+  GREEN="$(tput setaf 2 || true)"
+  RED="$(tput setaf 1 || true)"
+  CYAN="$(tput setaf 6 || true)"
+  YELLOW="$(tput setaf 3 || true)"
+  RESET="$(tput sgr0 || true)"
+else
+  BOLD=""
+  GREEN=""
+  RED=""
+  CYAN=""
+  YELLOW=""
+  RESET=""
+fi
 
 get_running_pid() {
   if [[ -f "${PID_FILE}" ]]; then
@@ -22,13 +41,17 @@ get_running_pid() {
     if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
       echo "${pid}"
       return 0
+    else
+      rm -f "${PID_FILE}"
     fi
   fi
-  # Fallback to checking pgrep for watch.py
   local proc
-  proc="$(pgrep -f "${WATCH_SCRIPT}" 2>/dev/null || true)"
+  proc="$(pgrep -f "${WATCH_SCRIPT}" 2>/dev/null || pgrep -f "python3.*watch\.py" 2>/dev/null || true)"
   if [[ -n "${proc}" ]]; then
-    echo "${proc}" | head -n 1
+    local active_pid
+    active_pid="$(echo "${proc}" | head -n 1)"
+    echo "${active_pid}" > "${PID_FILE}"
+    echo "${active_pid}"
     return 0
   fi
   return 1
@@ -37,7 +60,7 @@ get_running_pid() {
 cmd_start() {
   local pid
   if pid="$(get_running_pid)"; then
-    echo "ECLIPSE Chat Bridge is already running (PID: ${pid})."
+    echo "${YELLOW}ECLIPSE Chat Bridge is already running (PID: ${pid}).${RESET}"
     return 0
   fi
 
@@ -48,10 +71,10 @@ cmd_start() {
   sleep 1
 
   if kill -0 "${new_pid}" 2>/dev/null; then
-    echo "ECLIPSE Chat Bridge daemon started successfully (PID: ${new_pid})."
+    echo "${GREEN}✓ ECLIPSE Chat Bridge daemon started (PID: ${new_pid}).${RESET}"
     echo "Logging to: ${LOG_FILE}"
   else
-    echo "Failed to start ECLIPSE Chat Bridge daemon. Recent log entries:"
+    echo "${RED}✗ Failed to start ECLIPSE Chat Bridge daemon. Recent log:${RESET}"
     tail -n 20 "${LOG_FILE}" 2>/dev/null || true
     return 1
   fi
@@ -60,7 +83,7 @@ cmd_start() {
 cmd_stop() {
   local pid
   if ! pid="$(get_running_pid)"; then
-    echo "ECLIPSE Chat Bridge is not running."
+    echo "${YELLOW}ECLIPSE Chat Bridge is not running.${RESET}"
     rm -f "${PID_FILE}"
     return 0
   fi
@@ -78,34 +101,52 @@ cmd_stop() {
     fi
   done
   rm -f "${PID_FILE}"
-  echo "ECLIPSE Chat Bridge daemon stopped."
+  echo "${GREEN}✓ ECLIPSE Chat Bridge daemon stopped.${RESET}"
 }
 
 cmd_status() {
   local pid
   if pid="$(get_running_pid)"; then
-    echo "Status: RUNNING (PID: ${pid})"
-    echo "State Directory: ${STATE_DIR}"
-    echo "Log File: ${LOG_FILE}"
-    echo "Latest State Summary:"
+    echo "${BOLD}Status:${RESET} ${GREEN}RUNNING${RESET} (PID: ${pid})"
+    echo "${BOLD}Doc ID:${RESET} ${CYAN}${DOC_ID}${RESET}"
+    echo "${BOLD}State Directory:${RESET} ${STATE_DIR}"
+    echo "${BOLD}Log File:${RESET} ${LOG_FILE}"
     if [[ -f "${STATE_DIR}/requests.json" ]]; then
       "${PYTHON_BIN}" -c "
 import json
 try:
     with open('${STATE_DIR}/requests.json') as f:
         d = json.load(f)
-    print(f'  Tracked Requests: {len(d)}')
+    print(f'Tracked Requests: {len(d)}')
     completed = sum(1 for v in d.values() if v.get('status') == 'completed')
     running = sum(1 for v in d.values() if v.get('status') == 'running')
     error = sum(1 for v in d.values() if v.get('status') == 'error')
-    print(f'  Completed: {completed} | Running: {running} | Errors: {error}')
+    print(f'Completed: {completed} | Running: {running} | Errors: {error}')
+    keys = list(d.keys())[-5:]
+    if keys:
+        print('Recent Requests:')
+        for k in reversed(keys):
+            st = d[k].get('status', 'unknown')
+            print(f'  • {k} [{st}]')
 except Exception as e:
-    print('  Could not parse requests.json:', e)
+    print('Could not parse requests.json:', e)
 " 2>/dev/null || true
     fi
   else
-    echo "Status: STOPPED"
-    echo "State Directory: ${STATE_DIR}"
+    echo "${BOLD}Status:${RESET} ${RED}STOPPED${RESET}"
+    echo "${BOLD}Doc ID:${RESET} ${CYAN}${DOC_ID}${RESET}"
+    echo "${BOLD}State Directory:${RESET} ${STATE_DIR}"
+    if [[ -f "${STATE_DIR}/requests.json" ]]; then
+      "${PYTHON_BIN}" -c "
+import json
+try:
+    with open('${STATE_DIR}/requests.json') as f:
+        d = json.load(f)
+    print(f'Tracked Requests: {len(d)}')
+except Exception:
+    pass
+" 2>/dev/null || true
+    fi
   fi
 }
 
@@ -117,10 +158,11 @@ cmd_restart() {
 
 cmd_logs() {
   if [[ ! -f "${LOG_FILE}" ]]; then
-    echo "No log file found at ${LOG_FILE}."
+    echo "${YELLOW}No log file found at ${LOG_FILE}.${RESET}"
     return 0
   fi
   if [[ "${1:-}" == "-f" ]]; then
+    echo "${CYAN}Streaming logs (Ctrl+C to stop)...${RESET}"
     tail -f "${LOG_FILE}"
   else
     tail -n 50 "${LOG_FILE}"
@@ -132,53 +174,173 @@ cmd_run() {
 }
 
 cmd_test() {
-  echo "Running unit test suite for ECLIPSE Chat Bridge..."
+  echo "${BOLD}Running test suite for ECLIPSE Chat Bridge...${RESET}"
   cd "${SCRIPT_DIR}"
-  "${PYTHON_BIN}" -m unittest -v test_watch.py
+  "${PYTHON_BIN}" -m unittest -v test_watch.py test_latest_response_slot.py
 }
 
 cmd_help() {
-  cat << 'EOF'
-Usage: eclipse-bridge <command> [options]
+  cat << EOF
+${BOLD}Usage:${RESET} BRIDGE [command] [options]
 
-Commands:
+When called without commands, opens the interactive control menu.
+
+${BOLD}Commands:${RESET}
+  status             Check status of the bridge daemon and processed requests
   start [options]    Start the watcher daemon in the background
   stop               Stop the background watcher daemon
   restart [options]  Restart the watcher daemon
-  status             Check status of the bridge daemon and processed requests
   logs [-f]          View recent log output (pass -f to follow)
   run [options]      Run the watcher in foreground mode
-  test               Run the unit test suite
+  once               Poll once, process pending requests, and exit
+  test               Run the automated unit test suite
+  doc                Show the Google Doc URL and ID
+  menu               Open the interactive dashboard menu
   help               Show this help message
 
-Options passed to 'start' and 'run':
-  --execution {auto,confirm}   Execute scripts automatically or prompt locally (default: auto)
-  --interval SECONDS           Docs API revision polling interval (default: 5, min: 3)
+${BOLD}Options for 'start' and 'run':${RESET}
+  --execution {auto,confirm}   Auto execute or prompt locally (default: auto)
+  --interval SECONDS           Revision polling interval (default: 5, min: 3)
   --doc-id GOOGLE_DOC_ID       Google Doc ID to monitor
-  --no-sync-doc                Do not append execution results back to Google Doc
-  --once                       Poll once, process pending requests, and exit
+  --no-sync-doc                Do not sync diagnostics to Google Doc
 
-Environment Variables:
-  ECLIPSE_DOC_ID               Default Google Doc ID
-  ECLIPSE_CORE_DIR             Path to chat-run-docs directory containing chat_docs_core.py
+${BOLD}Environment Variables:${RESET}
+  ECLIPSE_DOC_ID               Google Doc ID to monitor
+  ECLIPSE_CORE_DIR             Path to directory containing chat_docs_core.py
   ECLIPSE_BRIDGE_STATE         Directory for requests.json, results, and logs
 EOF
 }
 
-case "${1:-help}" in
+cmd_menu() {
+  while true; do
+    clear 2>/dev/null || echo "--------------------------------------------------"
+    echo "${BOLD}================================================================${RESET}"
+    echo "              ${CYAN}${BOLD}ECLIPSE CHAT BRIDGE DASHBOARD${RESET}"
+    echo "${BOLD}================================================================${RESET}"
+    local pid
+    if pid="$(get_running_pid)"; then
+      echo " ${BOLD}Bridge Daemon:${RESET}  ${GREEN}● RUNNING${RESET} (PID: ${pid})"
+    else
+      echo " ${BOLD}Bridge Daemon:${RESET}  ${RED}○ STOPPED${RESET}"
+    fi
+    echo " ${BOLD}Google Doc ID:${RESET}  ${CYAN}${DOC_ID}${RESET}"
+    
+    if [[ -f "${STATE_DIR}/requests.json" ]]; then
+      "${PYTHON_BIN}" -c "
+import json
+try:
+    with open('${STATE_DIR}/requests.json') as f:
+        d = json.load(f)
+    completed = sum(1 for v in d.values() if v.get('status') == 'completed')
+    running = sum(1 for v in d.values() if v.get('status') == 'running')
+    error = sum(1 for v in d.values() if v.get('status') == 'error')
+    print(f' {BOLD}Requests Stats:{RESET} {completed} completed | {running} running | {error} errors (Total: {len(d)})')
+    keys = list(d.keys())[-3:]
+    if keys:
+        print(f'\n {BOLD}Latest Requests:${RESET}')
+        for k in reversed(keys):
+            st = d[k].get('status', 'unknown')
+            print(f'   • {k[:36]} [{st}]')
+except Exception:
+    pass
+" 2>/dev/null || true
+    fi
+    echo ""
+    echo "${BOLD}================================================================${RESET}"
+    echo " [S] Status & History      [R] Restart Daemon     [A] Start Daemon"
+    echo " [T] Stop Daemon           [L] Live Logs          [O] Run Once"
+    echo " [U] Run Unit Tests        [D] Show Google Doc    [Q] Quit / Back"
+    echo "${BOLD}================================================================${RESET}"
+    read -r -p "Select option [S]: " choice || break
+    case "${choice:-s}" in
+      s|S)
+        echo ""
+        cmd_status
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      r|R)
+        echo ""
+        cmd_restart
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      a|A)
+        echo ""
+        cmd_start
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      t|T)
+        echo ""
+        cmd_stop
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      l|L)
+        echo ""
+        cmd_logs -f
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      o|O)
+        echo ""
+        echo "Running single poll iteration..."
+        cmd_run --once || true
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      u|U)
+        echo ""
+        cmd_test || true
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      d|D)
+        echo ""
+        echo "${BOLD}Google Doc URL:${RESET}"
+        echo "https://docs.google.com/document/d/${DOC_ID}/edit"
+        echo ""
+        read -r -p "Press [ENTER] to return to menu: " _ || true
+        ;;
+      q|Q|b|B|exit)
+        echo "Exiting ECLIPSE Chat Bridge menu."
+        break
+        ;;
+      *)
+        echo "Unknown option: ${choice}"
+        sleep 1
+        ;;
+    esac
+  done
+}
+
+# Dispatcher
+if [[ $# -eq 0 ]]; then
+  if [[ -t 0 ]]; then
+    cmd_menu
+  else
+    cmd_status
+  fi
+  exit 0
+fi
+
+case "${1}" in
+  status)
+    shift
+    cmd_status "$@"
+    ;;
   start)
     shift
     cmd_start "$@"
     ;;
   stop)
+    shift
     cmd_stop
     ;;
   restart)
     shift
     cmd_restart "$@"
-    ;;
-  status)
-    cmd_status
     ;;
   logs)
     shift
@@ -194,6 +356,12 @@ case "${1:-help}" in
     ;;
   test)
     cmd_test
+    ;;
+  doc|url)
+    echo "https://docs.google.com/document/d/${DOC_ID}/edit"
+    ;;
+  menu)
+    cmd_menu
     ;;
   help|--help|-h)
     cmd_help
