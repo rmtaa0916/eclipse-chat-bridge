@@ -6,6 +6,7 @@ credentials, or provider tabs are touched by this module.
 from __future__ import annotations
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -53,6 +54,50 @@ def _location(rows, offset):
             return doc_start + _u16(chunk[:offset-offset_start])
     raise SlotError("Slot marker index cannot be resolved.")
 
+MAX_SLOT_RESULT_LEN = 1800
+
+def _bound_slot_result(result, max_len=MAX_SLOT_RESULT_LEN):
+    """Ensure result fits comfortably inside slot without blowing Docs API document limits."""
+    if not isinstance(result, dict):
+        return result
+    dumped = json.dumps(result, ensure_ascii=False)
+    if len(dumped) <= max_len:
+        return result
+
+    bounded = dict(result)
+    sub = bounded.get("result")
+    if isinstance(sub, dict):
+        sub_copy = dict(sub)
+        if isinstance(sub_copy.get("output"), str) and len(sub_copy["output"]) > 800:
+            out = sub_copy["output"]
+            sub_copy["output"] = out[:400] + "\n... [truncated for slot display] ...\n" + out[-350:]
+            sub_copy["truncated"] = True
+        if isinstance(sub_copy.get("entries"), list) and len(sub_copy["entries"]) > 15:
+            entries = sub_copy["entries"]
+            sub_copy["total_entries"] = len(entries)
+            sub_copy["sample_entries"] = entries[:15]
+            sub_copy.pop("entries", None)
+            sub_copy["truncated"] = True
+        if isinstance(sub_copy.get("content"), str) and len(sub_copy["content"]) > 800:
+            cont = sub_copy["content"]
+            sub_copy["content"] = cont[:400] + "\n... [truncated for slot display] ...\n" + cont[-350:]
+            sub_copy["truncated"] = True
+        bounded["result"] = sub_copy
+
+    dumped2 = json.dumps(bounded, ensure_ascii=False)
+    if len(dumped2) > max_len:
+        raw_file = None
+        if isinstance(bounded.get("result"), dict):
+            raw_file = bounded["result"].get("full_output_file")
+        return {
+            "status": bounded.get("status", "completed"),
+            "action": bounded.get("action", "unknown"),
+            "truncated": True,
+            "note": "Output exceeds Google Docs slot capacity; full raw output preserved locally",
+            "full_output_file": raw_file,
+        }
+    return bounded
+
 def build_slot_patch(document, request_id, result):
     """Pure, validated batchUpdate payload; no network or mutation."""
     text, runs = _runs(document)
@@ -80,7 +125,8 @@ def build_slot_patch(document, request_id, result):
     revision = document.get("revisionId")
     if not isinstance(revision, str) or not revision:
         raise SlotError("Document revision is required to prevent concurrent overwrites.")
-    payload = "\n" + json.dumps({"id": request_id, "result": result},
+    safe_result = _bound_slot_result(result)
+    payload = "\n" + json.dumps({"id": request_id, "result": safe_result},
                                 ensure_ascii=False, indent=2) + "\n"
     return {
         "requests": [
@@ -112,7 +158,8 @@ def replace_latest_diagnostic(client, doc_id, request_id, result):
             return True
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
-            if attempt < 2 and exc.code in (400,409,412) and "revision" in detail.lower():
+            if attempt < 2 and (exc.code in (409, 412) or (exc.code == 400 and ("revision" in detail.lower() or "precondition" in detail.lower()))):
+                time.sleep(0.5)
                 continue
             raise SlotError(f"Google Docs rejected slot update (HTTP {exc.code}): {detail}") from exc
     return False

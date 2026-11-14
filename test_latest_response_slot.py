@@ -64,5 +64,18 @@ class SlotTests(unittest.TestCase):
         with self.assertRaises(slot.SlotError):
             slot.build_slot_patch(record,"req_123456",{})
 
+    def test_large_result_payload_is_safely_bounded(self):
+        huge_entries = [f"file_{i}.py" for i in range(200)]
+        large_res = {
+            "status": "completed",
+            "action": "list_files",
+            "result": {"path": "/some/path", "entries": huge_entries}
+        }
+        patch = slot.build_slot_patch(doc(self.text()), "req_123456", large_res)
+        inserted = patch["requests"][1]["insertText"]["text"]
+        self.assertLess(len(inserted), 2000)
+        self.assertIn("sample_entries", inserted)
+        self.assertIn("total_entries", inserted)
+
 if __name__=="__main__":
     unittest.main()
