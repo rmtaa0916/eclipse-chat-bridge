@@ -3,26 +3,33 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import bridge_ui
 
 
 class BridgeUITests(unittest.TestCase):
     def test_render_bridge_scene_wide(self):
-        lines = bridge_ui.render_bridge_scene(frame=5, width=80)
+        lines = bridge_ui.render_bridge_scene(frame=5, cols=80, lines=30, is_active=True)
         self.assertGreaterEqual(len(lines), 10)
         text = "\n".join(lines)
         self.assertIn("ECLIPSE CHAT BRIDGE", text)
         self.assertIn("GOOGLE DOCS", text)
         self.assertIn("TERMUX", text)
+        self.assertIn("Down:", text)
+        self.assertIn("Uplk:", text)
+        self.assertIn("Wave:", text)
 
     def test_render_bridge_scene_compact(self):
-        lines = bridge_ui.render_bridge_scene(frame=2, width=60)
+        lines = bridge_ui.render_bridge_scene(frame=2, cols=60, lines=20, is_active=False)
         self.assertGreaterEqual(len(lines), 4)
         text = "\n".join(lines)
         self.assertIn("DOCS", text)
         self.assertIn("TERMUX", text)
+
+    def test_generate_telemetry_wave(self):
+        wave = bridge_ui.generate_telemetry_wave(frame=0, width=16, active=True)
+        self.assertTrue(any(g in wave for g in bridge_ui.WAVE_GLYPHS))
 
     def test_get_bridge_state_counts(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -45,7 +52,7 @@ class BridgeUITests(unittest.TestCase):
                 self.assertEqual(st["errors"], 1)
                 self.assertFalse(st["running"])
 
-    def test_render_dashboard_does_not_crash(self):
+    def test_zero_flicker_buffer_and_responsive_height(self):
         state = {
             "running": True,
             "pid": 1234,
@@ -56,8 +63,15 @@ class BridgeUITests(unittest.TestCase):
             "requests": {"task_abc": {"status": "completed"}},
             "doc_id": "doc123",
         }
-        with patch("os.system"):
-            bridge_ui.render_dashboard(state, frame=0)
+        with patch.object(bridge_ui, "get_terminal_dimensions", return_value=(80, 24)), \
+             patch("sys.stdout.write") as mock_write, \
+             patch("sys.stdout.flush"):
+            bridge_ui.render_dashboard_inplace(state, frame=0)
+            written = "".join(call.args[0] for call in mock_write.call_args_list)
+            # Must use in-place cursor home \033[H
+            self.assertIn("\033[H", written)
+            # Must NOT call clear screen \033[2J
+            self.assertNotIn("\033[2J", written)
 
 
 if __name__ == "__main__":
