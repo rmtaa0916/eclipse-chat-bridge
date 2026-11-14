@@ -23,6 +23,7 @@ if not CORE.exists():
 if str(CORE) not in sys.path:
     sys.path.insert(0, str(CORE))
 from chat_docs_core import GoogleDocsClient  # noqa: E402
+from latest_response_slot import replace_latest_diagnostic  # noqa: E402
 
 DOC_ID = '1N_TYeHUTexHaU2eiZ40hMWsaNNl-GaZJ-6H1MxHPPYM'
 ROOT = Path('/root/projects')
@@ -54,14 +55,11 @@ def get_doc_metadata(client, doc_id):
 
 
 def sync_response_to_doc(client, doc_id, request_id, result):
-    """Optionally append completed execution block back into the Google Doc."""
-    if not hasattr(client, 'append_doc'):
-        return False
+    """Update only the dedicated replaceable latest-diagnostic slot."""
     try:
-        text_block = f'\n\n{RESP_START}\n' + json.dumps({'id': request_id, 'result': result}, ensure_ascii=False, indent=2) + f'\n{RESP_END}\n'
-        return client.append_doc(doc_id, text_block)
+        return bool(replace_latest_diagnostic(client, doc_id, request_id, result))
     except Exception as exc:
-        print(f'Warning: failed to append response to Google Doc: {exc}', file=sys.stderr, flush=True)
+        print(f'Warning: latest diagnostic slot could not be updated: {exc}', file=sys.stderr, flush=True)
         return False
 
 
@@ -227,12 +225,12 @@ def notify_start(request_id, request):
         pass
 
 
-def deliver(request_id, result, result_dir):
+def deliver(request_id, result, result_dir, *, clipboard=True, doc_synced=False):
     text = 'ECLIPSE BRIDGE RESULT ' + request_id + '\n' + json.dumps(result, ensure_ascii=False, indent=2)
     output = result_dir / (request_id + '.txt')
     output.write_text(text, encoding='utf-8'); output.chmod(0o600)
     
-    copied = set_clipboard_reliable(text)
+    copied = set_clipboard_reliable(text) if clipboard else False
     
     summary = result.get('status', 'done')
     if result.get('action') == 'run' and isinstance(result.get('result'), dict) and 'exit_code' in result['result']:
@@ -247,7 +245,7 @@ def deliver(request_id, result, result_dir):
 
     # Always update Android system notification tray (dismissible, removes --ongoing)
     try:
-        clip_note = "clipboard ready" if copied else "manual copy needed"
+        clip_note = "Google Doc updated" if doc_synced else ("clipboard ready" if copied else "saved locally; Google Doc sync unavailable")
         subprocess.run([NOTIFY, '-t', f'ECLIPSE: {summary}', '-c', f'Request {request_id[:24]} ({clip_note})',
                         '--id', request_id[:20], '--priority', 'high'], capture_output=True, timeout=8)
     except Exception:
@@ -263,7 +261,7 @@ def main():
     parser.add_argument('--once', action='store_true', help='Check the document once and exit')
     parser.add_argument('--interval', type=int, default=5, help='Polling interval in seconds (default 5, minimum 3)')
     parser.add_argument('--doc-id', default=os.environ.get('ECLIPSE_DOC_ID', DOC_ID), help='Google Doc ID to monitor')
-    parser.add_argument('--no-sync-doc', action='store_true', help='Do not append execution results back to Google Doc')
+    parser.add_argument('--no-sync-doc', action='store_true', help='Do not sync diagnostics to Google Doc; use legacy clipboard delivery instead')
     args = parser.parse_args()
     if args.interval < 3:
         parser.error('interval must be at least 3 seconds')
@@ -319,14 +317,17 @@ def main():
                         result = {'status': 'error', 'action': action, 'error': f'{type(exc).__name__}: {exc}'}
                     save_json(results / (ident + '.json'), result)
                     state[ident]['status'] = result['status']; save_json(state_path, state)
-                    copied, output = deliver(ident, result, results)
-                    print(f'{ident}: {result["status"]}; ' + ('copied to clipboard' if copied else f'clipboard unavailable; saved to {output}'), flush=True)
+                    synced = False
                     if not args.no_sync_doc:
-                        if sync_response_to_doc(client, doc_id, ident, result):
-                            print(f'{ident}: response synced to Google Doc', flush=True)
+                        synced = sync_response_to_doc(client, doc_id, ident, result)
+                        if synced:
                             new_meta = get_doc_metadata(client, doc_id)
                             if isinstance(new_meta, dict) and new_meta.get('revisionId'):
                                 last_revision = new_meta['revisionId']
+                    copied, output = deliver(ident, result, results, clipboard=args.no_sync_doc,
+                                             doc_synced=synced)
+                    channel = "Google Doc latest slot" if synced else ("clipboard" if copied else "local result only")
+                    print(f'{ident}: {result["status"]}; delivered via {channel}; saved to {output}', flush=True)
             except KeyboardInterrupt:
                 print('\nWatcher stopped.', flush=True); return 0
             except Exception as exc:

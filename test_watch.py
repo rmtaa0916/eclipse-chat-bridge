@@ -108,19 +108,21 @@ class BridgeTests(unittest.TestCase):
 
 
     def test_sync_response_to_doc(self):
-        class Client:
-            def __init__(self):
-                self.appended = []
-            def append_doc(self, doc_id, text):
-                self.appended.append((doc_id, text))
-                return True
-        c = Client()
-        res = watch.sync_response_to_doc(c, 'doc123', 'req1', {'status': 'completed'})
+        with patch.object(watch, 'replace_latest_diagnostic', return_value=True) as write:
+            res = watch.sync_response_to_doc(object(), 'doc123', 'req1', {'status': 'completed'})
         self.assertTrue(res)
-        self.assertEqual(len(c.appended), 1)
-        self.assertEqual(c.appended[0][0], 'doc123')
-        self.assertIn(watch.RESP_START, c.appended[0][1])
-        self.assertIn('req1', c.appended[0][1])
+        write.assert_called_once_with(write.call_args.args[0], 'doc123', 'req1', {'status': 'completed'})
+
+    def test_doc_delivery_does_not_touch_clipboard_or_android_browser(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(watch, 'set_clipboard_reliable', side_effect=AssertionError('clipboard must not run')), \
+                 patch.object(watch.subprocess, 'run') as run:
+                copied, path = watch.deliver('task_123456', {'status': 'completed'},
+                                            Path(temp), clipboard=False, doc_synced=True)
+            self.assertFalse(copied)
+            self.assertTrue(path.is_file())
+            self.assertNotIn(watch.CLIP, [call.args[0][0] for call in run.call_args_list])
+            self.assertNotIn('adb', [call.args[0][0] for call in run.call_args_list])
 
     def test_metadata_skips_reading_doc_when_version_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:
