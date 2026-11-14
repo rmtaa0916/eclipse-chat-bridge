@@ -176,7 +176,7 @@ cmd_run() {
 cmd_test() {
   echo "${BOLD}Running test suite for ECLIPSE Chat Bridge...${RESET}"
   cd "${SCRIPT_DIR}"
-  "${PYTHON_BIN}" -m unittest -v test_watch.py test_latest_response_slot.py
+  "${PYTHON_BIN}" -m unittest -v test_watch.py test_latest_response_slot.py test_bridge_ui.py
 }
 
 cmd_help() {
@@ -187,6 +187,7 @@ When called without commands, opens the interactive control menu.
 
 ${BOLD}Commands:${RESET}
   status             Check status of the bridge daemon and processed requests
+  monitor            Open the live animated quantum bridge monitor
   start [options]    Start the watcher daemon in the background
   stop               Stop the background watcher daemon
   restart [options]  Restart the watcher daemon
@@ -212,6 +213,9 @@ EOF
 }
 
 cmd_menu() {
+  if [[ -f "${SCRIPT_DIR}/bridge_ui.py" ]]; then
+    exec "${PYTHON_BIN}" "${SCRIPT_DIR}/bridge_ui.py" "$@"
+  fi
   while true; do
     clear 2>/dev/null || echo "--------------------------------------------------"
     echo "${BOLD}================================================================${RESET}"
@@ -326,6 +330,10 @@ if [[ $# -eq 0 ]]; then
 fi
 
 case "${1}" in
+  monitor|-m|--monitor)
+    shift
+    exec "${PYTHON_BIN}" "${SCRIPT_DIR}/bridge_ui.py" monitor "$@"
+    ;;
   status)
     shift
     cmd_status "$@"
