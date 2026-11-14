@@ -211,6 +211,22 @@ def set_clipboard_reliable(text):
     return False
 
 
+def notify_start(request_id, request):
+    action = request.get('action', 'task')
+    toast_msg = f"ECLIPSE [RECEIVED]: {request_id[:20]} ({action})"
+    try:
+        subprocess.run([TOAST, '-s', '-g', 'top', toast_msg], capture_output=True, timeout=8)
+    except Exception:
+        pass
+    try:
+        content = f"Action: {action} | Ongoing execution in Termux..."
+        subprocess.run([NOTIFY, '-t', f'ECLIPSE: Processing {request_id[:16]}...',
+                        '-c', content, '--id', request_id[:20],
+                        '--priority', 'high', '--ongoing'], capture_output=True, timeout=8)
+    except Exception:
+        pass
+
+
 def deliver(request_id, result, result_dir):
     text = 'ECLIPSE BRIDGE RESULT ' + request_id + '\n' + json.dumps(result, ensure_ascii=False, indent=2)
     output = result_dir / (request_id + '.txt')
@@ -221,7 +237,7 @@ def deliver(request_id, result, result_dir):
     summary = result.get('status', 'done')
     if result.get('action') == 'run' and isinstance(result.get('result'), dict) and 'exit_code' in result['result']:
         summary = f"exit {result['result']['exit_code']}"
-    toast_msg = f"ECLIPSE [{request_id[:20]}]: {summary}"
+    toast_msg = f"ECLIPSE [DONE]: {request_id[:20]} ({summary})"
 
     # Always fire toast notification
     try:
@@ -229,7 +245,7 @@ def deliver(request_id, result, result_dir):
     except Exception as exc:
         print(f'Toast unavailable: {exc}', file=sys.stderr, flush=True)
 
-    # Always fire Android system notification tray
+    # Always update Android system notification tray (dismissible, removes --ongoing)
     try:
         clip_note = "clipboard ready" if copied else "manual copy needed"
         subprocess.run([NOTIFY, '-t', f'ECLIPSE: {summary}', '-c', f'Request {request_id[:24]} ({clip_note})',
@@ -289,6 +305,7 @@ def main():
                             print(f'Refused changed request with reused ID: {ident}', flush=True)
                         continue
                     action = request.get('action')
+                    notify_start(ident, request)
                     if action == 'run' and args.execution == 'confirm':
                         print(f'\nRequest {ident}, cwd {request.get("cwd", ROOT)}:\n{request.get("script", "")}')
                         if input('Run this command locally? [y/N]: ').strip().lower() != 'y':

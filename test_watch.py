@@ -48,6 +48,17 @@ class BridgeTests(unittest.TestCase):
                 self.assertIn(watch.TOAST, commands)
                 self.assertIn(watch.NOTIFY, commands)
 
+    def test_notify_start_fires_toast_and_ongoing_notification(self):
+        with patch.object(watch.subprocess, 'run') as run:
+            run.return_value = type('Result', (), {'returncode': 0, 'stdout': ''})()
+            watch.notify_start('task_running_123', {'action': 'run'})
+            commands = [c.args[0][0] for c in run.call_args_list]
+            self.assertIn(watch.TOAST, commands)
+            self.assertIn(watch.NOTIFY, commands)
+            notify_args = [c.args[0] for c in run.call_args_list if c.args[0][0] == watch.NOTIFY][0]
+            self.assertIn('--ongoing', notify_args)
+            self.assertIn('--priority', notify_args)
+
     def test_one_shot_persists_id_and_does_not_repeat(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); state = root / 'state'; project = root / 'project'; project.mkdir()
