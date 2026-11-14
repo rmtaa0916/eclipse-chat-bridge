@@ -48,6 +48,19 @@ class BridgeTests(unittest.TestCase):
                 self.assertIn(watch.TOAST, commands)
                 self.assertIn(watch.NOTIFY, commands)
 
+
+    def test_script_limit_accepts_18kb_and_rejects_over_24kb(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            good='printf large_ok\n' + '#' * 18_000
+            request={'id':'large_request_1234','script':good,'timeout_seconds':12}
+            result=watch.run_script(request,root,root)
+            self.assertEqual(result['exit_code'],0)
+            self.assertIn('large_ok',result['output'])
+            bad={'id':'oversize_request_1234','script':'printf nope\n' + '#' * 24_000,'timeout_seconds':12}
+            with self.assertRaisesRegex(ValueError,'24000'):
+                watch.run_script(bad,root,root)
+
     def test_notify_start_fires_toast_and_ongoing_notification(self):
         with patch.object(watch.subprocess, 'run') as run:
             run.return_value = type('Result', (), {'returncode': 0, 'stdout': ''})()

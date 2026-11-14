@@ -38,6 +38,7 @@ TOAST = '/data/data/com.termux/files/usr/bin/termux-toast'
 NOTIFY = '/data/data/com.termux/files/usr/bin/termux-notification'
 ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{7,63}\Z')
 MAX_OUTPUT = 24_000
+MAX_SCRIPT_BYTES = 24_000
 
 
 def get_doc_metadata(client, doc_id):
@@ -117,8 +118,8 @@ def checked_path(value):
 def run_script(request, cwd, directory):
     script = request.get('script')
     timeout = request.get('timeout_seconds', 60)
-    if not isinstance(script, str) or not script.strip() or len(script.encode()) > 16_000:
-        raise ValueError('script must contain 1–16000 bytes.')
+    if not isinstance(script, str) or not script.strip() or len(script.encode()) > MAX_SCRIPT_BYTES:
+        raise ValueError('script must contain 1–24000 bytes.')
     if type(timeout) is not int or not 1 <= timeout <= 120:
         raise ValueError('timeout_seconds must be between 1 and 120.')
     path = directory / (request['id'] + '.raw')
