@@ -248,6 +248,7 @@ class ContextSnapshotTests(unittest.TestCase):
         self.assertTrue(any(x["path"] == "main.py" for x in report["route"]))
         self.assertFalse(any(x["path"] == "unknown.py" for x in report["route"]))
         self.assertTrue(report["excerpts"])
+        self.assertTrue(report["selected_sources"])
         self.assertTrue(report["matches"])
         self.assertEqual(report["capture"]["status"], "NOT_ATTACHED")
         dep = next(x for x in report["graph"]["dependencies"] if x["path"] == "main.py")
@@ -271,6 +272,20 @@ class ContextSnapshotTests(unittest.TestCase):
             "backups" in n for d in report["graph"]["dependencies"]
             for n in [d["path"], *d["upstream"], *d["downstream"]]
         ))
+
+    def test_snapshot_exposes_screened_inventory_not_denied_sources(self):
+        (self.project / "study_notes.md").write_text(
+            "# Clinical research notes\nRelevant study methods\n", encoding="utf-8")
+        (self.project / "suspicious_source.py").write_text(
+            "FAKE_UNSCREENED_SECRET\n", encoding="utf-8")
+        report = self.report(goal="research clinical study notes")
+        self.assertTrue(report["reader"]["research_intent"])
+        self.assertEqual(report["reader"]["screen_denied_count"], 1)
+        paths = [x["path"] for x in report["selected_sources"]]
+        self.assertIn("study_notes.md", paths)
+        self.assertNotIn("suspicious_source.py", paths)
+        self.assertIn("REV11_CONTENT_SCREENING_EXCLUSIONS", report["gaps"])
+        self.assertNotIn("FAKE_UNSCREENED_SECRET", json.dumps(report))
 
     def test_rejects_untrusted_project_roots(self):
         for name in ("", "../bad", ".hidden", "/tmp", "x/y", "a"*65, None):
