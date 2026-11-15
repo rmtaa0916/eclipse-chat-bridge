@@ -81,18 +81,18 @@ def _backend():
         root = Path(os.readlink(f"/proc/self/fd/{fd}"))
         if req["action"] == "overview":
             rows = []
-            for p in sorted(root.glob("*.py")):
+            for p in sorted(root.rglob("*.py")):
                 data = p.read_bytes()
-                rows.append({"path": p.name, "sha256": hashlib.sha256(data).hexdigest(),
+                rows.append({"path": p.relative_to(root).as_posix(), "sha256": hashlib.sha256(data).hexdigest(),
                              "line_count": len(data.splitlines())})
             return {"ok": True, "files": rows, "symbols": [],
                     "truncated": False, "scan_errors": 0}
         if req["action"] == "search":
             hits = []
-            for p in sorted(root.glob("*.py")):
+            for p in sorted(root.rglob("*.py")):
                 for n, txt in enumerate(p.read_text().splitlines(), 1):
                     if req["query"].casefold() in txt.casefold():
-                        hits.append({"path": p.name, "line": n,
+                        hits.append({"path": p.relative_to(root).as_posix(), "line": n,
                                      "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
                                      "content": txt})
             return {"ok": True, "matches": hits, "truncated": False}
@@ -169,6 +169,25 @@ class ContextSnapshotTests(unittest.TestCase):
         self.assertEqual(report["capture"]["status"], "NOT_ATTACHED")
         dep = next(x for x in report["graph"]["dependencies"] if x["path"] == "main.py")
         self.assertIn("helper.py", dep["downstream"])
+
+    def test_excludes_backup_files_from_graph_and_matches(self):
+        backup = self.project / "backups"
+        backup.mkdir()
+        (backup / "legacy_helper.py").write_text(
+            "def calculate(value):\n    return value - 999\n", encoding="utf-8"
+        )
+        report = self.report()
+        self.assertEqual(report["reader"]["file_count_returned"], 3)
+        self.assertEqual(report["reader"]["file_count_after_backup_filter"], 2)
+        self.assertEqual(report["reader"]["ignored_nonprimary_files"], 1)
+        self.assertEqual(report["graph"]["screened_source_files"], 2)
+        self.assertFalse(any(
+            "backups" in x["path"] for x in report["route"] + report["matches"] + report["excerpts"]
+        ))
+        self.assertFalse(any(
+            "backups" in n for d in report["graph"]["dependencies"]
+            for n in [d["path"], *d["upstream"], *d["downstream"]]
+        ))
 
     def test_rejects_untrusted_project_roots(self):
         for name in ("", "../bad", ".hidden", "/tmp", "x/y", "a"*65, None):
