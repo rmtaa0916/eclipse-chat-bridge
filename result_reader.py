@@ -92,38 +92,23 @@ def _json_object(data: bytes, category: str) -> dict:
     return value
 
 
-def _fits(doc_request_id: str, payload: dict) -> bool:
+def _fits(doc_request_id: str, payload: dict, action: str = "read_result") -> bool:
     # Account for actual Google Docs pretty-print payload, not merely a raw
     # source chunk. This includes escaped newlines and long request IDs.
     wrapped = {
         "id": doc_request_id,
-        "result": {"status": "completed", "action": "read_result", "result": payload},
+        "result": {"status": "completed", "action": action, "result": payload},
     }
     return len(json.dumps(wrapped, ensure_ascii=False, indent=2)) <= _MAX_SLOT_ENVELOPE_CHARS
 
 
-def read_result(
-    results_dir: Path | str,
-    *,
-    request_id: str,
-    source_id: str,
-    offset: int = 0,
-    max_bytes: int = _DEFAULT_CHUNK_BYTES,
-) -> dict:
-    """Retrieve one bounded chunk of a previously completed run result.
 
-    The saved requests.json AND source_id.json must confirm a completed run.
-    Never follow full_output_file, path, or cwd from metadata. Byte cursors
-    are stable for a content hash; decoding uses UTF-8 replacement when an
-    offset crosses a character boundary.
+def _load_completed_output(results: Path, target_id: str) -> bytes:
+    """Load an exact completed execution output from verified watcher state.
+
+    Both the state record and execution receipt must authorize this source.
+    There are no user-supplied file paths in this operation.
     """
-    current_id = _id(request_id)
-    target_id = _id(source_id)
-    at = _bounded_int(offset, lower=0, upper=_MAX_RAW_BYTES, name="OFFSET")
-    requested = _bounded_int(
-        max_bytes, lower=1, upper=_MAX_CHUNK_BYTES, name="CHUNK_SIZE"
-    )
-    results = Path(results_dir)
     if results.name != "results":
         raise ResultReadError("UNTRUSTED_RESULT_DIRECTORY")
 
@@ -165,6 +150,36 @@ def read_result(
     finally:
         os.close(state_fd)
 
+    return raw
+
+
+def read_result(
+    results_dir: Path | str,
+    *,
+    request_id: str,
+    source_id: str,
+    offset: int = 0,
+    max_bytes: int = _DEFAULT_CHUNK_BYTES,
+) -> dict:
+    """Retrieve one bounded chunk of a previously completed run result.
+
+    The saved requests.json AND source_id.json must confirm a completed run.
+    Never follow full_output_file, path, or cwd from metadata. Byte cursors
+    are stable for a content hash; decoding uses UTF-8 replacement when an
+    offset crosses a character boundary.
+    """
+    current_id = _id(request_id)
+    target_id = _id(source_id)
+    at = _bounded_int(offset, lower=0, upper=_MAX_RAW_BYTES, name="OFFSET")
+    requested = _bounded_int(
+        max_bytes, lower=1, upper=_MAX_CHUNK_BYTES, name="CHUNK_SIZE"
+    )
+    results = Path(results_dir)
+    if results.name != "results":
+        raise ResultReadError("UNTRUSTED_RESULT_DIRECTORY")
+
+    raw = _load_completed_output(results, target_id)
+
     total = len(raw)
     if at > total:
         raise ResultReadError("OFFSET_BEYOND_END")
@@ -196,3 +211,69 @@ def read_result(
     if budget > 0 and not lo:
         raise ResultReadError("RESULT_SLOT_BUDGET_TOO_SMALL")
     return selected
+
+
+def find_result(
+    results_dir: Path | str,
+    *,
+    request_id: str,
+    source_id: str,
+    query: str,
+    start_offset: int = 0,
+    max_bytes: int = _DEFAULT_CHUNK_BYTES,
+) -> dict:
+    """Find the next ASCII literal in a completed run, returning bounded context.
+
+    The search is case-insensitive for ASCII and intentionally not regex-based.
+    A repeated request with next_search_offset finds subsequent matches.
+    """
+    current_id = _id(request_id)
+    target_id = _id(source_id)
+    at = _bounded_int(start_offset, lower=0, upper=_MAX_RAW_BYTES, name="OFFSET")
+    requested = _bounded_int(max_bytes, lower=1, upper=_MAX_CHUNK_BYTES,
+                             name="CHUNK_SIZE")
+    if not isinstance(query, str) or not re.fullmatch(r"[ -~]{2,64}", query):
+        raise ResultReadError("INVALID_SEARCH_QUERY")
+    needle = query.encode("ascii")
+    raw = _load_completed_output(Path(results_dir), target_id)
+    if at > len(raw):
+        raise ResultReadError("OFFSET_BEYOND_END")
+    digest = hashlib.sha256(raw).hexdigest()
+    match = raw.lower().find(needle.lower(), at)
+    if match < 0:
+        payload = {"source_id": target_id, "found": False, "total_bytes": len(raw),
+                   "sha256": digest}
+        if not _fits(current_id, payload, "find_result"):
+            raise ResultReadError("RESULT_SLOT_BUDGET_TOO_SMALL")
+        return payload
+
+    def window(start: int) -> dict:
+        def packet(count: int) -> dict:
+            end = start + count
+            return {
+                "source_id": target_id, "found": True,
+                "match_offset": match, "next_search_offset": match + len(needle),
+                "offset": start, "next_offset": end, "total_bytes": len(raw),
+                "sha256": digest,
+                "content": raw[start:end].decode("utf-8", "replace"),
+            }
+        budget = min(requested, len(raw) - start)
+        lo, hi = 0, budget
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if _fits(current_id, packet(mid), "find_result"):
+                lo = mid
+            else:
+                hi = mid - 1
+        result = packet(lo)
+        if not _fits(current_id, result, "find_result"):
+            raise ResultReadError("RESULT_SLOT_BUDGET_TOO_SMALL")
+        return result
+
+    start = max(0, match - 24)
+    found = window(start)
+    if found["next_offset"] < match + len(needle):
+        found = window(match)
+    if found["next_offset"] < match + len(needle):
+        raise ResultReadError("SEARCH_MATCH_TOO_LARGE_FOR_SLOT")
+    return found
