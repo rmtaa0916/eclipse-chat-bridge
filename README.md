@@ -144,43 +144,56 @@ The bridge automatically writes the receipt to the document and to the local sta
 
 ---
 
-## Read-only project context snapshots (development feature)
+## Priority-aware project and research context snapshots
 
-The bridge can assemble source-screened, provenance-linked context into a **local
-saved result**, while returning only a compact receipt through the existing
-Google Docs Latest Diagnostic section:
+The `context_snapshot` action now **ranks directory and filename metadata
+before allocating source-read bytes**. Revision 11 still opens and screens
+every selected file using descriptor-relative no-follow file access, file and
+aggregate read limits, and best-effort sensitive-content filtering. The Mode 7
+Source Router contributes pure lexical relevance scoring over already-screened
+source paths. Its separate raw-filesystem scan is not used to authorize access.
+
+Example:
 
 ```json
 {
-  "id": "context_snapshot_20261115_r1",
+  "id": "context_priority_20261115_r1",
   "action": "context_snapshot",
   "project": "eclipse-chat-bridge",
-  "goal": "diagnose response formatting and evidence retrieval"
+  "goal": "diagnose bridge result delivery and source-routing dependencies"
 }
 ```
 
-The trusted watcher selects the project only from its workspace's immediate
-subdirectories. It never accepts an arbitrary absolute filesystem root for this
-action. Revision 11's Context Reader screens the source content; the Mode 7
-Source Router ranks paths, and the graph engine parses only screened eligible
-source text. Backups, archives, build outputs, and similar non-primary file
-paths are filtered from graph and source evidence.
+For documentation/research questions, use a goal such as
+`"review research protocol notes and summarize study evidence"`.
+The selector recognizes documentation intent and reserves more of the bounded
+reading budget for `.md` and `.txt` files. This is local document research,
+not an internet literature search; PDF/Office files are not yet included in
+Revision 11's native source allowlist.
 
-A snapshot's detailed JSON stays under the bridge's private results directory.
-The Docs receipt includes its original request ID, source SHA-256, byte count,
-graph edge count, and completion status. To retrieve the full contents, use
-`read_result` with the snapshot request ID as `source_id`. To locate a
-relevant path or symbol first, use `find_result` with the same source ID.
+The result JSON remains local in the bridge's private results directory;
+the Google Doc only contains a compact receipt. Use `find_result` to locate
+relevant symbols, paths, or findings in the saved snapshot and `read_result`
+for targeted excerpts, using the original snapshot request ID as `source_id`.
 
-The reader's overview and search are **bounded and may be incomplete**.
-Snapshots preserve truncation flags and evidence gaps. A graph relationship
-is a best-effort static inference, not proof of runtime behavior. Context
-Capture is explicitly marked `NOT_ATTACHED` until a capture result is
-associated by an authorized caller; the snapshot action neither starts provider
-capture nor modifies Context Reference Google Docs.
+Key boundaries and limitations:
 
-This feature never opens browser tabs, sends provider prompts, or applies game
-code. The control Doc remains a small request/response channel.
+- Only immediate project directories under the trusted `/root/projects`
+  workspace are accepted. The request cannot supply an absolute root path.
+- Source selection is capped at 40 screened files and 96 attempted opens,
+  with Revision 11's file and aggregate-byte limits and directory budgets.
+- Backup, build, vendor, node_modules and archive paths are excluded from
+  primary source evidence. Symlinks/hardlinks and flagged secret-containing
+  file contents are denied.
+- Context completeness is never assumed. Snapshot `reader.truncated`,
+  `reader.eligible_candidates`, `reader.source_attempts`, and `gaps`
+  describe selection limits. The inferred graph is not proof of runtime behavior.
+- Context Capture remains `NOT_ATTACHED`, no provider prompts are submitted,
+  and no browser tabs or game files are touched.
+
+Example research queries can summarize locally saved Markdown or plain-text
+notes, while fresh outside sources should be retrieved separately through
+ChatGPT's web or connected research tools.
 
 ---
 
