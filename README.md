@@ -74,6 +74,51 @@ Supported actions:
 - **`run`**: Executes a bash script in `cwd` with strict process isolation and timeout.
 - **`read_file`**: Reads bounded lines from a target file (`path`, `start_line`, `line_count`).
 - **`list_files`**: Lists non-hidden directory contents (`path`).
+- **`read_result`** (staged): Retrieve a bounded byte range from a previous completed execution result. No shell execution.
+- **`find_result`** (staged): Case-insensitive ASCII literal search in saved output, returning the matching offset and evidence excerpt.
+
+### Retrieve previous diagnostic evidence (staged actions)
+
+Both operations accept a prior request ID, not a filesystem path. The watcher
+verifies that the ID is recorded as completed, that a matching completed
+`run` receipt exists, and that its output file is in the bridge's own
+results directory. No symlinks or hardlinks are followed. Output is capped
+and each response carries the source SHA-256 fingerprint.
+
+Read a saved range:
+
+```json
+{
+  "id": "context_read_20261115_r1",
+  "action": "read_result",
+  "source_id": "previous_run_20261115_r1",
+  "offset": 0,
+  "max_bytes": 240
+}
+```
+
+Search a saved result without knowing the error's byte offset:
+
+```json
+{
+  "id": "context_find_20261115_r1",
+  "action": "find_result",
+  "source_id": "previous_run_20261115_r1",
+  "query": "Traceback",
+  "start_offset": 0,
+  "max_bytes": 240
+}
+```
+
+The reader automatically sizes JSON output for the tablet's existing
+650-character Latest Diagnostic slot. Each action still requires a unique
+request ID; source_id refers to the original completed run. For pagination,
+reuse the returned next_offset, and for subsequent literal matches use
+next_search_offset. Byte offsets refer to the original UTF-8 output file.
+
+These actions do not change the Google Docs protocol, run tests, or modify
+the provider browser. The new code is staged on an isolated branch and is
+not live until separately activated.
 
 ### 2. Response Format (`<<<ECLIPSE_BRIDGE_RESPONSE_V1>>>`)
 The bridge automatically writes the receipt to the document and to the local state directory:
