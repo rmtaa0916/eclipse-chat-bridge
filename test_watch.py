@@ -57,6 +57,17 @@ class BridgeTests(unittest.TestCase):
             self.assertLessEqual(result['next_offset'] - result['offset'], 160)
             self.assertEqual(result['total_bytes'], len(raw))
             self.assertFalse(result['eof'])
+            find = {
+                'id': 'followup_find_20261115',
+                'action': 'find_result',
+                'source_id': source,
+                'query': 'root_cause_at_middle',
+            }
+            with patch.object(watch, 'run_script',
+                              side_effect=AssertionError('find_result must never invoke shell')):
+                found = watch.execute(find, result_dir)
+            self.assertEqual(found['match_offset'], 10000)
+            self.assertIn('ROOT_CAUSE_AT_MIDDLE', found['content'])
 
     def test_script_reports_real_exit_and_output(self):
         with tempfile.TemporaryDirectory() as temp:
