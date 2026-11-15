@@ -25,6 +25,62 @@ class BridgeTests(unittest.TestCase):
                 with self.assertRaises(ValueError): watch.checked_path(str(root / 'token.json'))
                 with self.assertRaises(ValueError): watch.checked_path(str(root / 'escape'))
 
+    def test_read_result_dispatch_is_bounded_and_does_not_run_shell(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result_dir = root / 'results'
+            result_dir.mkdir()
+            source = 'original_run_20261115'
+            raw = b'A' * 10000 + b'ROOT_CAUSE_AT_MIDDLE' + b'B' * 10000
+            (result_dir / (source + '.raw')).write_bytes(raw)
+            (result_dir / (source + '.json')).write_text(json.dumps({
+                'status': 'completed', 'action': 'run',
+                'result': {
+                    'exit_code': 1,
+                    'full_output_file': str(result_dir / (source + '.raw')),
+                },
+            }))
+            (root / 'requests.json').write_text(json.dumps({
+                source: {'status': 'completed', 'sha256': 'a'*64},
+            }))
+            request = {
+                'id': 'followup_read_20261115',
+                'action': 'read_result',
+                'source_id': source,
+                'offset': 9970,
+                'max_bytes': 160,
+            }
+            with patch.object(watch, 'run_script',
+                              side_effect=AssertionError('read_result must never invoke shell')):
+                result = watch.execute(request, result_dir)
+            self.assertIn('ROOT_CAUSE_AT_MIDDLE', result['content'])
+            self.assertLessEqual(result['next_offset'] - result['offset'], 160)
+            self.assertEqual(result['total_bytes'], len(raw))
+            self.assertFalse(result['eof'])
+            find = {
+                'id': 'followup_find_20261115',
+                'action': 'find_result',
+                'source_id': source,
+                'query': 'root_cause_at_middle',
+            }
+            with patch.object(watch, 'run_script',
+                              side_effect=AssertionError('find_result must never invoke shell')):
+                found = watch.execute(find, result_dir)
+            self.assertEqual(found['match_offset'], 10000)
+            self.assertIn('ROOT_CAUSE_AT_MIDDLE', found['content'])
+
+    def test_context_snapshot_is_dispatched_without_shell(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request = {'id': 'test_context_snapshot_20261115',
+                       'action': 'context_snapshot',
+                       'project': 'demo-project', 'goal': 'test'}
+            with patch.object(watch, 'save_context_snapshot', return_value={'project': 'demo-project'}) as snapshot, \
+                 patch.object(watch, 'run_script', side_effect=AssertionError('context should not execute Bash')):
+                result = watch.execute(request, root)
+            self.assertEqual(result['project'], 'demo-project')
+            snapshot.assert_called_once()
+
     def test_script_reports_real_exit_and_output(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

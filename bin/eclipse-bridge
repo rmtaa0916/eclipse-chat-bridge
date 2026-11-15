@@ -176,7 +176,7 @@ cmd_run() {
 cmd_test() {
   echo "${BOLD}Running test suite for ECLIPSE Chat Bridge...${RESET}"
   cd "${SCRIPT_DIR}"
-  "${PYTHON_BIN}" -m unittest -v test_watch.py test_latest_response_slot.py test_bridge_ui.py
+  PYTHONDONTWRITEBYTECODE=1 "${PYTHON_BIN}" -B -m unittest -v test_watch.py test_latest_response_slot.py test_bridge_ui.py test_result_reader.py test_context_snapshot.py test_priority_discovery.py
 }
 
 cmd_help() {

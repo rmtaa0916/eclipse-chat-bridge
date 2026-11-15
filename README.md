@@ -74,6 +74,51 @@ Supported actions:
 - **`run`**: Executes a bash script in `cwd` with strict process isolation and timeout.
 - **`read_file`**: Reads bounded lines from a target file (`path`, `start_line`, `line_count`).
 - **`list_files`**: Lists non-hidden directory contents (`path`).
+- **`read_result`** (staged): Retrieve a bounded byte range from a previous completed execution result. No shell execution.
+- **`find_result`** (staged): Case-insensitive ASCII literal search in saved output, returning the matching offset and evidence excerpt.
+
+### Retrieve previous diagnostic evidence (staged actions)
+
+Both operations accept a prior request ID, not a filesystem path. The watcher
+verifies that the ID is recorded as completed, that a matching completed
+`run` receipt exists, and that its output file is in the bridge's own
+results directory. No symlinks or hardlinks are followed. Output is capped
+and each response carries the source SHA-256 fingerprint.
+
+Read a saved range:
+
+```json
+{
+  "id": "context_read_20261115_r1",
+  "action": "read_result",
+  "source_id": "previous_run_20261115_r1",
+  "offset": 0,
+  "max_bytes": 240
+}
+```
+
+Search a saved result without knowing the error's byte offset:
+
+```json
+{
+  "id": "context_find_20261115_r1",
+  "action": "find_result",
+  "source_id": "previous_run_20261115_r1",
+  "query": "Traceback",
+  "start_offset": 0,
+  "max_bytes": 240
+}
+```
+
+The reader automatically sizes JSON output for the tablet's existing
+650-character Latest Diagnostic slot. Each action still requires a unique
+request ID; source_id refers to the original completed run. For pagination,
+reuse the returned next_offset, and for subsequent literal matches use
+next_search_offset. Byte offsets refer to the original UTF-8 output file.
+
+These actions do not change the Google Docs protocol, run tests, or modify
+the provider browser. The new code is staged on an isolated branch and is
+not live until separately activated.
 
 ### 2. Response Format (`<<<ECLIPSE_BRIDGE_RESPONSE_V1>>>`)
 The bridge automatically writes the receipt to the document and to the local state directory:
@@ -96,6 +141,59 @@ The bridge automatically writes the receipt to the document and to the local sta
 }
 <<<END_ECLIPSE_BRIDGE_RESPONSE_V1>>>
 ```
+
+---
+
+## Priority-aware project and research context snapshots
+
+The `context_snapshot` action now **ranks directory and filename metadata
+before allocating source-read bytes**. Revision 11 still opens and screens
+every selected file using descriptor-relative no-follow file access, file and
+aggregate read limits, and best-effort sensitive-content filtering. The Mode 7
+Source Router contributes pure lexical relevance scoring over already-screened
+source paths. Its separate raw-filesystem scan is not used to authorize access.
+
+Example:
+
+```json
+{
+  "id": "context_priority_20261115_r1",
+  "action": "context_snapshot",
+  "project": "eclipse-chat-bridge",
+  "goal": "diagnose bridge result delivery and source-routing dependencies"
+}
+```
+
+For documentation/research questions, use a goal such as
+`"review research protocol notes and summarize study evidence"`.
+The selector recognizes documentation intent and reserves more of the bounded
+reading budget for `.md` and `.txt` files. This is local document research,
+not an internet literature search; PDF/Office files are not yet included in
+Revision 11's native source allowlist.
+
+The result JSON remains local in the bridge's private results directory;
+the Google Doc only contains a compact receipt. Use `find_result` to locate
+relevant symbols, paths, or findings in the saved snapshot and `read_result`
+for targeted excerpts, using the original snapshot request ID as `source_id`.
+
+Key boundaries and limitations:
+
+- Only immediate project directories under the trusted `/root/projects`
+  workspace are accepted. The request cannot supply an absolute root path.
+- Source selection is capped at 40 screened files and 96 attempted opens,
+  with Revision 11's file and aggregate-byte limits and directory budgets.
+- Backup, build, vendor, node_modules and archive paths are excluded from
+  primary source evidence. Symlinks/hardlinks and flagged secret-containing
+  file contents are denied.
+- Context completeness is never assumed. Snapshot `reader.truncated`,
+  `reader.eligible_candidates`, `reader.source_attempts`, and `gaps`
+  describe selection limits. The inferred graph is not proof of runtime behavior.
+- Context Capture remains `NOT_ATTACHED`, no provider prompts are submitted,
+  and no browser tabs or game files are touched.
+
+Example research queries can summarize locally saved Markdown or plain-text
+notes, while fresh outside sources should be retrieved separately through
+ChatGPT's web or connected research tools.
 
 ---
 
