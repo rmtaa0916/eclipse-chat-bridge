@@ -37,10 +37,24 @@ MAX_ATTEMPTED_FILES = 96
 MAX_CANDIDATES = 2000
 
 
+def _canonical_term(value: str) -> str:
+    # Morphological equivalents used by existing mode-7 project names.
+    aliases = {
+        "routing": "router", "route": "router", "routes": "router",
+        "graphify": "graph", "graphs": "graph", "graphing": "graph",
+        "dependencies": "dependency", "dependent": "dependency",
+        "reading": "reader", "read": "reader", "readers": "reader",
+        "documents": "document", "documentation": "document",
+        "reports": "report", "studies": "study",
+    }
+    return aliases.get(value, value)
+
+
 def _terms(value: str) -> set[str]:
-    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", value)
+    spaced = re.sub(r"\bmode\s+(\d+)\b", r"mode\1", value, flags=re.I)
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", spaced)
     return {
-        v for v in re.findall(r"[a-z0-9]{3,}", spaced.casefold())
+        _canonical_term(v) for v in re.findall(r"[a-z0-9]{3,}", spaced.casefold())
         if v not in STOP_WORDS
     }
 
@@ -90,6 +104,8 @@ def _candidate_paths(root_fd: int, goal: str, reader) -> tuple[list[tuple[int, s
         "selected_entries_visited": 0,
         "eligible_candidates": 0,
         "directories_visited": 0,
+        "screen_denied_count": 0,
+        "read_error_count": 0,
         "entries_truncated": False,
         "depth_truncated": False,
         "scan_errors": 0,
@@ -252,9 +268,16 @@ def discover_screened(
                 text, digest, lines = reader._read_and_screen_fd(fd, validated, budget=read_budget)
             finally:
                 os.close(fd)
-        except (OSError, reader.RequestError):
-            # Rev11 rejects secrets, special files, hardlinks and files changed
-            # concurrently. None of their contents or paths enter the packet.
+        except reader.RequestError as exc:
+            # Never emit the denied filename or any content from a rejected
+            # file. Aggregate counts are sufficient to explain missing leads.
+            if exc.code == "SECRET_CONTENT_DENIED":
+                meta["screen_denied_count"] += 1
+            else:
+                meta["read_error_count"] += 1
+            continue
+        except OSError:
+            meta["read_error_count"] += 1
             continue
         screened.append({
             "path": validated,
