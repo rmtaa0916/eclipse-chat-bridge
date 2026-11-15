@@ -138,6 +138,7 @@ class ContextSnapshotTests(unittest.TestCase):
             "    return value + 1\n", encoding="utf-8",
         )
         self.state = Path(self.temp.name) / "state"
+        self.state.mkdir()
         self.results = self.state / "results"
         self.results.mkdir()
         self.patch_backend = patch.object(context, "_backend", return_value=_backend())
