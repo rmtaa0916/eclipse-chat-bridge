@@ -144,6 +144,46 @@ The bridge automatically writes the receipt to the document and to the local sta
 
 ---
 
+## Read-only project context snapshots (development feature)
+
+The bridge can assemble source-screened, provenance-linked context into a **local
+saved result**, while returning only a compact receipt through the existing
+Google Docs Latest Diagnostic section:
+
+```json
+{
+  "id": "context_snapshot_20261115_r1",
+  "action": "context_snapshot",
+  "project": "eclipse-chat-bridge",
+  "goal": "diagnose response formatting and evidence retrieval"
+}
+```
+
+The trusted watcher selects the project only from its workspace's immediate
+subdirectories. It never accepts an arbitrary absolute filesystem root for this
+action. Revision 11's Context Reader screens the source content; the Mode 7
+Source Router ranks paths, and the graph engine parses only screened eligible
+source text. Backups, archives, build outputs, and similar non-primary file
+paths are filtered from graph and source evidence.
+
+A snapshot's detailed JSON stays under the bridge's private results directory.
+The Docs receipt includes its original request ID, source SHA-256, byte count,
+graph edge count, and completion status. To retrieve the full contents, use
+`read_result` with the snapshot request ID as `source_id`. To locate a
+relevant path or symbol first, use `find_result` with the same source ID.
+
+The reader's overview and search are **bounded and may be incomplete**.
+Snapshots preserve truncation flags and evidence gaps. A graph relationship
+is a best-effort static inference, not proof of runtime behavior. Context
+Capture is explicitly marked `NOT_ATTACHED` until a capture result is
+associated by an authorized caller; the snapshot action neither starts provider
+capture nor modifies Context Reference Google Docs.
+
+This feature never opens browser tabs, sends provider prompts, or applies game
+code. The control Doc remains a small request/response channel.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
