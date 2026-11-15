@@ -5,6 +5,7 @@ import ast
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 import unittest
@@ -35,6 +36,9 @@ class SmallDigraph:
     def number_of_edges(self):
         return len(self.edges)
 
+    def in_degree(self, name):
+        return sum(1 for _a, b in self.edges if b == name)
+
     def predecessors(self, name):
         return iter(a for a, b in self.edges if b == name)
 
@@ -62,6 +66,84 @@ class FakeGraphEngine:
 
     def _parse_json_source(self, content, rel):
         return None
+
+
+class FakeRequestError(ValueError):
+    pass
+
+
+class FakeReader:
+    RequestError = FakeRequestError
+    MAX_TOTAL_DIR_ENUMERATION_ENTRIES = 65536
+    MAX_DIR_ENUMERATION_ENTRIES = 16384
+    MAX_VISITED_ENTRIES = 2000
+    MAX_TRAVERSAL_DEPTH = 16
+    MAX_ENTRIES_PER_DIR = 512
+    MAX_FILE_BYTES = 256 * 1024
+    MAX_AGGREGATE_READ_BYTES = 2 * 1024 * 1024
+
+    class _ScanBudgetState:
+        def __init__(self):
+            self.aggregate_bytes = 0
+            self.aggregate_bytes_truncated = False
+            self.any_truncated = False
+
+    @staticmethod
+    def _require_descriptor_primitives():
+        return (os.O_NOFOLLOW, os.O_DIRECTORY, os.O_NONBLOCK)
+
+    @staticmethod
+    def _open_dir_relative(parent_fd, name, nofollow, directory):
+        return os.open(name, os.O_RDONLY | nofollow | directory, dir_fd=parent_fd)
+
+    @staticmethod
+    def _has_sensitive_component(parts):
+        return any(
+            part.startswith(".") or any(
+                x in part.casefold() for x in ("credential", "secret", "password", "token", "private")
+            )
+            for part in parts
+        )
+
+    @staticmethod
+    def _is_allowed_extension(name):
+        return Path(name).suffix.lower() in {".py", ".js", ".ts", ".md", ".txt"}
+
+    @staticmethod
+    def _open_validated_relative_file(root_fd, rel):
+        current = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+        parts = Path(rel).parts
+        try:
+            for part in parts[:-1]:
+                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                  dir_fd=current)
+                os.close(current)
+                current = next_fd
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW,
+                         dir_fd=current)
+            info = os.fstat(fd)
+            if info.st_nlink != 1 or not stat.S_ISREG(info.st_mode):
+                os.close(fd)
+                raise FakeRequestError("INVALID_FILE")
+            return fd, rel
+        finally:
+            os.close(current)
+
+    @staticmethod
+    def _read_and_screen_fd(fd, rel, budget=None):
+        data = os.read(fd, FakeReader.MAX_FILE_BYTES + 1)
+        if len(data) > FakeReader.MAX_FILE_BYTES:
+            raise FakeRequestError("FILE_TOO_LARGE")
+        if b"FAKE_UNSCREENED_SECRET" in data:
+            raise FakeRequestError("SECRET_CONTENT_DENIED")
+        if budget is not None:
+            budget.aggregate_bytes += len(data)
+            if budget.aggregate_bytes > FakeReader.MAX_AGGREGATE_READ_BYTES:
+                budget.aggregate_bytes_truncated = True
+                budget.any_truncated = True
+                raise FakeRequestError("AGGREGATE_READ_LIMIT")
+        text = data.decode("utf-8")
+        return text, hashlib.sha256(data).hexdigest(), text.splitlines()
 
 
 def _backend():
@@ -119,8 +201,9 @@ def _backend():
             SimpleNamespace(path="unknown.py", kind="CODE", score=500),
         ])
 
+    from priority_discovery import _terms, _name_terms
     return (root_fd, open_file, screen_file, process_request,
-            FakeGraphEngine, dot_name, route_sources)
+            FakeGraphEngine, dot_name, _terms, _name_terms, FakeReader)
 
 
 class ContextSnapshotTests(unittest.TestCase):
@@ -158,7 +241,7 @@ class ContextSnapshotTests(unittest.TestCase):
 
     def test_snapshot_combines_reader_router_and_graph(self):
         report = self.report()
-        self.assertEqual(report["schema"], "ECLIPSE_BRIDGE_CONTEXT_SNAPSHOT_V1")
+        self.assertEqual(report["schema"], "ECLIPSE_BRIDGE_CONTEXT_SNAPSHOT_V2")
         self.assertEqual(report["reader"]["file_count_returned"], 2)
         self.assertEqual(report["graph"]["screened_source_files"], 2)
         self.assertGreaterEqual(report["graph"]["edges"], 1)
@@ -177,9 +260,9 @@ class ContextSnapshotTests(unittest.TestCase):
             "def calculate(value):\n    return value - 999\n", encoding="utf-8"
         )
         report = self.report()
-        self.assertEqual(report["reader"]["file_count_returned"], 3)
+        self.assertEqual(report["reader"]["file_count_returned"], 2)
         self.assertEqual(report["reader"]["file_count_after_backup_filter"], 2)
-        self.assertEqual(report["reader"]["ignored_nonprimary_files"], 1)
+        self.assertEqual(report["reader"]["eligible_candidates"], 2)
         self.assertEqual(report["graph"]["screened_source_files"], 2)
         self.assertFalse(any(
             "backups" in x["path"] for x in report["route"] + report["matches"] + report["excerpts"]
