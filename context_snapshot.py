@@ -67,10 +67,11 @@ def _backend(core: Path):
         process_request,
     )
     from eclipse_graphify import CodebaseGraphEngine, _rel_path_to_dot_path
+    import context_reader as reader
     from eclipse_mode7_source_router import _terms as route_terms, _name_terms as route_name_terms
     return (_open_trusted_root_fd, _open_validated_relative_file,
             _read_and_screen_fd, process_request, CodebaseGraphEngine,
-            _rel_path_to_dot_path, route_terms, route_name_terms)
+            _rel_path_to_dot_path, route_terms, route_name_terms, reader)
 
 
 def build_context_snapshot(
@@ -86,10 +87,9 @@ def build_context_snapshot(
     root = _project_root(Path(workspace_root), project)
     (
         open_root, _open_file, _screen_file, _process_request,
-        GraphEngine, dot_name, mode7_terms, mode7_name_terms,
+        GraphEngine, dot_name, mode7_terms, mode7_name_terms, reader,
     ) = _backend(Path(core_root))
-    # This is a trusted local module, not a request-controlled import.
-    import context_reader as reader
+    # The injected reader is the trusted locally installed Revision 11 module.
     from priority_discovery import discover_screened
 
     fd = open_root(str(root))
