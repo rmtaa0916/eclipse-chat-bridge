@@ -69,7 +69,9 @@ class FakeGraphEngine:
 
 
 class FakeRequestError(ValueError):
-    pass
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
 
 
 class FakeReader:
