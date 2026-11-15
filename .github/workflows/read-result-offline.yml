@@ -28,4 +28,4 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          python -B -m unittest -v test_result_reader.py test_latest_response_slot.py test_context_snapshot.py
+          python -B -m unittest -v test_result_reader.py test_latest_response_slot.py test_context_snapshot.py test_priority_discovery.py
