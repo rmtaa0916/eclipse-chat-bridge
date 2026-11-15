@@ -90,7 +90,7 @@ def build_context_snapshot(
         GraphEngine, dot_name, mode7_terms, mode7_name_terms, reader,
     ) = _backend(Path(core_root))
     # The injected reader is the trusted locally installed Revision 11 module.
-    from priority_discovery import discover_screened
+    from priority_discovery import discover_screened, _terms as priority_terms, _name_terms as priority_name_terms
 
     fd = open_root(str(root))
     try:
@@ -114,6 +114,10 @@ def build_context_snapshot(
             gaps.append("SOURCE_READ_BUDGET_EXHAUSTED")
         if selection.get("scan_errors"):
             gaps.append("SOURCE_SCAN_ERRORS")
+        if selection.get("screen_denied_count"):
+            gaps.append("REV11_CONTENT_SCREENING_EXCLUSIONS")
+        if selection.get("read_error_count"):
+            gaps.append("REV11_SOURCE_READ_EXCLUSIONS")
 
         graph = GraphEngine(root)
         code_sources = {
@@ -137,11 +141,11 @@ def build_context_snapshot(
         # The original Mode 7 router's raw filesystem scan is deliberately
         # bypassed. Reuse its *pure* lexical term heuristics against files
         # already screened by Revision 11; it cannot grant file access.
-        hints = mode7_terms(goal)
+        hints = mode7_terms(goal) | priority_terms(goal)
         lead_rows = []
         for item in screened:
             rel = item["path"]
-            lexical = len(mode7_name_terms(rel) & hints)
+            lexical = len((mode7_name_terms(rel) | priority_name_terms(rel)) & hints)
             dependent_count = graph.graph.in_degree(rel) if rel in graph.graph else 0
             score = (item["score"] + lexical * 10
                      + min(60, dependent_count * 4))
@@ -227,6 +231,8 @@ def build_context_snapshot(
                 "raw_entries_enumerated": selection.get("raw_entries_enumerated"),
                 "research_intent": selection.get("research_intent"),
                 "source_attempts": selection.get("source_attempts"),
+                "screen_denied_count": selection.get("screen_denied_count"),
+                "read_error_count": selection.get("read_error_count"),
                 "aggregate_source_bytes": selection.get("aggregate_source_bytes"),
                 "unselected_or_refused_candidates": selection.get(
                     "unselected_or_refused_candidates"
@@ -240,6 +246,11 @@ def build_context_snapshot(
                 "complete": not bool(selection.get("incomplete")),
             },
             "route": leads,
+            "selected_sources": [
+                {"path": item["path"], "sha256": item["sha256"],
+                 "kind": item["kind"], "priority": item["score"]}
+                for item in screened
+            ],
             "matches": matches,
             "excerpts": excerpts,
             "capture": {
