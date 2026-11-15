@@ -182,6 +182,70 @@ class ReadResultTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.ResultReadError, "RESULT_FILE_TOO_LARGE"):
             self.retrieve()
 
+    def test_find_result_recovers_middle_without_known_offset(self):
+        raw = b"A"*12000 + self.marker + b"B"*12000
+        self.store(raw)
+        found = reader.find_result(
+            self.results, request_id=self.current_id, source_id=self.target_id,
+            query="root_cause_at_middle",
+        )
+        self.assertTrue(found["found"])
+        self.assertEqual(found["match_offset"], 12000)
+        self.assertIn("ROOT_CAUSE_AT_MIDDLE", found["content"])
+        self.assertEqual(found["sha256"], hashlib.sha256(raw).hexdigest())
+        result = {"status": "completed", "action": "find_result", "result": found}
+        self.assertIn("ROOT_CAUSE_AT_MIDDLE",
+                      json.dumps(_bound_slot_result(result, max_len=650)))
+        self.assertLessEqual(
+            len(json.dumps({"id": self.current_id, "result": result},
+                           ensure_ascii=False, indent=2)), 620
+        )
+
+    def test_find_result_repeated_matches_and_no_match(self):
+        self.store(b"ERROR one\nnormal\nERROR two\nnormal")
+        first = reader.find_result(
+            self.results, request_id=self.current_id, source_id=self.target_id,
+            query="error",
+        )
+        self.assertEqual(first["match_offset"], 0)
+        second = reader.find_result(
+            self.results, request_id=self.current_id, source_id=self.target_id,
+            query="ERROR", start_offset=first["next_search_offset"],
+        )
+        self.assertEqual(second["match_offset"], 17)
+        absent = reader.find_result(
+            self.results, request_id=self.current_id, source_id=self.target_id,
+            query="ERROR", start_offset=second["next_search_offset"],
+        )
+        self.assertFalse(absent["found"])
+        self.assertEqual(absent["total_bytes"], len(b"ERROR one\nnormal\nERROR two\nnormal"))
+
+    def test_find_result_treats_query_as_literal_not_regex(self):
+        self.store(b"error=123\nmore logs")
+        absent = reader.find_result(
+            self.results, request_id=self.current_id, source_id=self.target_id,
+            query=".*",
+        )
+        self.assertFalse(absent["found"])
+        for query in ("", "x", "\nerror", "a"*65, "🦊", None):
+            with self.subTest(query=query), self.assertRaises(reader.ResultReadError):
+                reader.find_result(
+                    self.results, request_id=self.current_id,
+                    source_id=self.target_id, query=query,
+                )
+
+    def test_find_result_enforces_source_receipt_rules(self):
+        self.store(b"SECRET_CODE")
+        metadata = self.results / (self.target_id + ".json")
+        meta = json.loads(metadata.read_text())
+        meta["action"] = "read_file"
+        metadata.write_text(json.dumps(meta))
+        with self.assertRaisesRegex(reader.ResultReadError, "RESULT_NOT_A_COMPLETED_RUN"):
+            reader.find_result(
+                self.results, request_id=self.current_id,
+                source_id=self.target_id, query="SECRET",
+            )
+
     def test_no_writes_to_source_tree(self):
         self.store(b"a"*2000)
         before = sorted((str(p), p.read_bytes()) for p in self.state.rglob("*") if p.is_file())
