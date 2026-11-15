@@ -23,6 +23,9 @@ class SmallDigraph:
     def add_node(self, name, **attrs):
         self.nodes[name] = attrs
 
+    def __contains__(self, name):
+        return name in self.nodes
+
     def add_edge(self, a, b, **attrs):
         self.edges.add((a, b))
 
