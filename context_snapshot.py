@@ -139,11 +139,15 @@ def build_context_snapshot(
         # screening as overview/read; a router hit by itself is not authority.
         matches = []
         try:
-            words = [x for x in re.findall(r"[A-Za-z0-9_]{4,}", goal) if x.lower()
-                     not in {"from", "this", "that", "project", "error", "file"}]
+            stop = {"from", "this", "that", "project", "error", "file",
+                    "find", "search", "diagnose", "debug", "investigate",
+                    "review", "check", "issue", "failure", "failed"}
+            words = [x for x in re.findall(r"[A-Za-z0-9_]{4,}", goal)
+                     if x.lower() not in stop]
             if words:
+                needle = sorted(words, key=lambda x: (-len(x), x.casefold()))[0]
                 found = process_request(
-                    fd, json.dumps({"action": "search", "query": words[0]})
+                    fd, json.dumps({"action": "search", "query": needle})
                 )
                 if found.get("ok"):
                     matches = [
