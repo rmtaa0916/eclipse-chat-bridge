@@ -24,6 +24,7 @@ if str(CORE) not in sys.path:
     sys.path.insert(0, str(CORE))
 from chat_docs_core import GoogleDocsClient  # noqa: E402
 from latest_response_slot import replace_latest_diagnostic  # noqa: E402
+from result_reader import read_result  # noqa: E402
 
 DOC_ID = '1N_TYeHUTexHaU2eiZ40hMWsaNNl-GaZJ-6H1MxHPPYM'
 ROOT = Path('/root/projects')
@@ -149,6 +150,14 @@ def run_script(request, cwd, directory):
 
 def execute(request, result_dir):
     op = request.get('action')
+    if op == 'read_result':
+        return read_result(
+            result_dir,
+            request_id=request.get('id'),
+            source_id=request.get('source_id'),
+            offset=request.get('offset', 0),
+            max_bytes=request.get('max_bytes', 240),
+        )
     if op == 'read_file':
         p = checked_path(request.get('path'))
         if not p.is_file() or p.stat().st_size > 2_000_000:
@@ -175,7 +184,7 @@ def execute(request, result_dir):
         if not cwd.is_dir():
             raise ValueError('cwd is not a directory.')
         return run_script(request, cwd, result_dir)
-    raise ValueError('Unknown action; use read_file, list_files, or run.')
+    raise ValueError('Unknown action; use read_file, list_files, read_result, or run.')
 
 
 def save_json(path, value):
