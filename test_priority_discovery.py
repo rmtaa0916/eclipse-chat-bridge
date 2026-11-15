@@ -94,6 +94,23 @@ class PriorityDiscoveryTests(unittest.TestCase):
         self.assertIn("critical_engine/handler.py",
                       [x["path"] for x in result["files"]])
 
+    def test_routing_and_graph_terms_are_normalized(self):
+        self.assertIn("router", priority._terms("source routing"))
+        self.assertIn("router", priority._name_terms("source_router.py"))
+        self.assertIn("graph", priority._name_terms("eclipse_graphify.py"))
+        self.assertIn("mode7", priority._terms("Mode 7 source routing"))
+        (self.root / "source_router.py").write_text("def route(): pass\n")
+        (self.root / "unrelated.py").write_text("def unrelated(): pass\n")
+        result = self.scan("investigate source routing")
+        self.assertEqual(result["files"][0]["path"], "source_router.py")
+
+    def test_screening_exclusion_count_has_no_denied_filename(self):
+        (self.root / "source_router.py").write_text("def safe(): return 1\n")
+        (self.root / "source_reader.py").write_text("FAKE_UNSCREENED_SECRET\n")
+        result = self.scan("source reader router")
+        self.assertEqual(result["selection"]["screen_denied_count"], 1)
+        self.assertNotIn("source_reader.py", [x["path"] for x in result["files"]])
+
     def test_no_source_file_modification(self):
         file = self.root / "notes.md"
         file.write_text("Research notes\n")
