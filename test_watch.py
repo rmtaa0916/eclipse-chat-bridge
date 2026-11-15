@@ -69,6 +69,18 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(found['match_offset'], 10000)
             self.assertIn('ROOT_CAUSE_AT_MIDDLE', found['content'])
 
+    def test_context_snapshot_is_dispatched_without_shell(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request = {'id': 'test_context_snapshot_20261115',
+                       'action': 'context_snapshot',
+                       'project': 'demo-project', 'goal': 'test'}
+            with patch.object(watch, 'save_context_snapshot', return_value={'project': 'demo-project'}) as snapshot, \
+                 patch.object(watch, 'run_script', side_effect=AssertionError('context should not execute Bash')):
+                result = watch.execute(request, root)
+            self.assertEqual(result['project'], 'demo-project')
+            snapshot.assert_called_once()
+
     def test_script_reports_real_exit_and_output(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
