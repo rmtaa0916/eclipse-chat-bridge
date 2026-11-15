@@ -25,6 +25,7 @@ if str(CORE) not in sys.path:
 from chat_docs_core import GoogleDocsClient  # noqa: E402
 from latest_response_slot import replace_latest_diagnostic  # noqa: E402
 from result_reader import read_result, find_result  # noqa: E402
+from context_snapshot import save_context_snapshot  # noqa: E402
 
 DOC_ID = '1N_TYeHUTexHaU2eiZ40hMWsaNNl-GaZJ-6H1MxHPPYM'
 ROOT = Path('/root/projects')
@@ -150,6 +151,8 @@ def run_script(request, cwd, directory):
 
 def execute(request, result_dir):
     op = request.get('action')
+    if op == 'context_snapshot':
+        return save_context_snapshot(request, result_dir, ROOT, CORE)
     if op == 'find_result':
         return find_result(
             result_dir,
@@ -193,7 +196,7 @@ def execute(request, result_dir):
         if not cwd.is_dir():
             raise ValueError('cwd is not a directory.')
         return run_script(request, cwd, result_dir)
-    raise ValueError('Unknown action; use read_file, list_files, read_result, find_result, or run.')
+    raise ValueError('Unknown action; use read_file, list_files, read_result, find_result, context_snapshot, or run.')
 
 
 def save_json(path, value):
