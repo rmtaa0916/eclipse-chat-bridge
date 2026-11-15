@@ -132,7 +132,7 @@ def _load_completed_output(results: Path, target_id: str) -> bytes:
             )
             run_data = metadata.get("result")
             if (metadata.get("status") != "completed"
-                    or metadata.get("action") != "run"
+                    or metadata.get("action") not in {"run", "context_snapshot"}
                     or not isinstance(run_data, dict)):
                 raise ResultReadError("RESULT_NOT_A_COMPLETED_RUN")
 
