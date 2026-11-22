@@ -156,6 +156,44 @@ class BridgeTests(unittest.TestCase):
             self.assertNotIn(watch.CLIP, [call.args[0][0] for call in run.call_args_list])
             self.assertNotIn('adb', [call.args[0][0] for call in run.call_args_list])
 
+    def test_silent_doc_delivery_does_not_use_any_android_ui(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(watch.subprocess, 'run') as run:
+                copied, path = watch.deliver(
+                    'silent_task_123', {'status': 'completed'},
+                    Path(temp), clipboard=False, doc_synced=True, notify=False
+                )
+            self.assertFalse(copied)
+            self.assertTrue(path.is_file())
+            run.assert_not_called()
+
+    def test_silent_request_routes_without_notifications(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); state = root / 'state'
+            project = root / 'project'; project.mkdir()
+            request = {
+                'id': 'silent_task_123', 'action': 'list_files',
+                'path': str(project), 'silent': True,
+            }
+            doc = {'body': {'content': [{'textRun': {
+                'content': watch.START + '\n' + json.dumps(request) + '\n' + watch.END
+            }}]}}
+            class Client:
+                def get_doc(self, doc_id): return doc
+            with patch.object(watch, 'STATE_DIR', state), \
+                 patch.object(watch, 'ROOT', root), \
+                 patch.object(watch, 'GoogleDocsClient', Client), \
+                 patch.object(watch, 'notify_start') as notify, \
+                 patch.object(watch, 'deliver', return_value=(False, root/'result')) as deliver, \
+                 patch.object(watch.sys, 'argv', ['watch.py', '--once']):
+                self.assertEqual(watch.main(), 0)
+            notify.assert_not_called()
+            self.assertFalse(deliver.call_args.kwargs['notify'])
+            self.assertEqual(
+                json.loads((state/'requests.json').read_text())['silent_task_123']['status'],
+                'completed',
+            )
+
     def test_metadata_skips_reading_doc_when_version_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); state = root / 'state'
