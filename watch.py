@@ -188,25 +188,25 @@ def save_json(path, value):
 
 
 def set_clipboard_reliable(text):
+    """Attempt clipboard delivery without changing Android foreground apps."""
     try:
-        cp = subprocess.run([CLIP], input=text, text=True, capture_output=True, timeout=5)
-        vg = subprocess.run([CLIP_GET], capture_output=True, text=True, timeout=5)
-        if vg.returncode == 0 and vg.stdout.rstrip('\n') == text.rstrip('\n'):
-            return True
+        copied = subprocess.run(
+            [CLIP], input=text, text=True, capture_output=True, timeout=5,
+        )
+        if copied.returncode != 0:
+            return False
+        verified = subprocess.run(
+            [CLIP_GET], capture_output=True, text=True, timeout=5,
+        )
+        return (
+            verified.returncode == 0
+            and verified.stdout.rstrip('\\n') == text.rstrip('\\n')
+        )
     except Exception:
         pass
-    # If background clipboard access was blocked by Android, use seamless ADB focus assist
-    try:
-        subprocess.run(['adb', 'shell', 'am', 'start', '-n', 'com.termux/.app.TermuxActivity'], capture_output=True, timeout=5)
-        time.sleep(0.35)
-        subprocess.run([CLIP], input=text, text=True, capture_output=True, timeout=5)
-        time.sleep(0.1)
-        vg2 = subprocess.run([CLIP_GET], capture_output=True, text=True, timeout=5)
-        subprocess.run(['adb', 'shell', 'am', 'start', '-n', 'com.android.chrome/com.google.android.apps.chrome.Main'], capture_output=True, timeout=5)
-        if vg2.returncode == 0 and vg2.stdout.rstrip('\n') == text.rstrip('\n'):
-            return True
-    except Exception:
-        pass
+    # Android 10+ may block background clipboard access. Do not use
+    # adb shell am start to foreground Termux or Chrome as a workaround.
+    # The result is still saved locally (and normally synced to Google Docs).
     return False
 
 
