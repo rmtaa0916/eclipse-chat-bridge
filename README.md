@@ -42,6 +42,7 @@ sequenceDiagram
 - **Google Docs Revision Polling:** Monitors document edits via Google Docs API `revisionId` field projection (`fields=revisionId`). Checks take ~2.5s on average with tiny payloads (~150 bytes), preventing API quota exhaustion.
 - **Automated Hands-Free Execution:** Default `--execution auto` mode processes verified diagnostic requests immediately without blocking for local CLI prompt confirmation.
 - **Non-interrupting Android Behavior:** When Android blocks background clipboard access, the bridge records the result in its local state and normally synchronizes it to Google Docs. It does **not** launch Termux, Chrome, or other apps to recover the clipboard, and it leaves the user's current app in the foreground.
+- **Optional silent requests:** Set `"silent": true` inside a bridge request to suppress Android toasts and notifications for that request while retaining its local receipt and Google Docs result. Existing requests keep their notification behavior.
 - **Dual Android Notifications:** Simultaneously displays an on-screen toast (`termux-toast`) and persistent Android system notification tray alert (`termux-notification`) with high priority.
 - **Bidirectional Google Doc Sync:** Automatically formats and appends response blocks (`<<<ECLIPSE_BRIDGE_RESPONSE_V1>>>`) directly back into the Google Doc, giving LLM assistants a direct return channel.
 - **Idempotent & Safe Execution:**
