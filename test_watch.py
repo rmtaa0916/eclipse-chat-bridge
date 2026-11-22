@@ -49,6 +49,25 @@ class BridgeTests(unittest.TestCase):
                 self.assertIn(watch.NOTIFY, commands)
 
 
+    def test_clipboard_failure_does_not_switch_android_apps(self):
+        with patch.object(watch.subprocess, 'run') as run:
+            run.return_value = type('Result', (), {'returncode': 1, 'stdout': ''})()
+            self.assertFalse(watch.set_clipboard_reliable('example'))
+            commands = [c.args[0] for c in run.call_args_list]
+            self.assertEqual(commands, [[watch.CLIP]])
+            self.assertFalse(any('adb' in c or 'am' in c for c in commands))
+
+    def test_clipboard_readback_mismatch_does_not_launch_chrome(self):
+        with patch.object(watch.subprocess, 'run') as run:
+            run.side_effect = [
+                type('Result', (), {'returncode': 0, 'stdout': ''})(),
+                type('Result', (), {'returncode': 0, 'stdout': 'different'})(),
+            ]
+            self.assertFalse(watch.set_clipboard_reliable('example'))
+            commands = [c.args[0] for c in run.call_args_list]
+            self.assertEqual(commands, [[watch.CLIP], [watch.CLIP_GET]])
+            self.assertFalse(any('adb' in c or 'am' in c for c in commands))
+
     def test_script_limit_accepts_18kb_and_rejects_over_24kb(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
@@ -136,6 +155,44 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(path.is_file())
             self.assertNotIn(watch.CLIP, [call.args[0][0] for call in run.call_args_list])
             self.assertNotIn('adb', [call.args[0][0] for call in run.call_args_list])
+
+    def test_silent_doc_delivery_does_not_use_any_android_ui(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(watch.subprocess, 'run') as run:
+                copied, path = watch.deliver(
+                    'silent_task_123', {'status': 'completed'},
+                    Path(temp), clipboard=False, doc_synced=True, notify=False
+                )
+            self.assertFalse(copied)
+            self.assertTrue(path.is_file())
+            run.assert_not_called()
+
+    def test_silent_request_routes_without_notifications(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); state = root / 'state'
+            project = root / 'project'; project.mkdir()
+            request = {
+                'id': 'silent_task_123', 'action': 'list_files',
+                'path': str(project), 'silent': True,
+            }
+            doc = {'body': {'content': [{'textRun': {
+                'content': watch.START + '\n' + json.dumps(request) + '\n' + watch.END
+            }}]}}
+            class Client:
+                def get_doc(self, doc_id): return doc
+            with patch.object(watch, 'STATE_DIR', state), \
+                 patch.object(watch, 'ROOT', root), \
+                 patch.object(watch, 'GoogleDocsClient', Client), \
+                 patch.object(watch, 'notify_start') as notify, \
+                 patch.object(watch, 'deliver', return_value=(False, root/'result')) as deliver, \
+                 patch.object(watch.sys, 'argv', ['watch.py', '--once']):
+                self.assertEqual(watch.main(), 0)
+            notify.assert_not_called()
+            self.assertFalse(deliver.call_args.kwargs['notify'])
+            self.assertEqual(
+                json.loads((state/'requests.json').read_text())['silent_task_123']['status'],
+                'completed',
+            )
 
     def test_metadata_skips_reading_doc_when_version_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:

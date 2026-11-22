@@ -188,25 +188,25 @@ def save_json(path, value):
 
 
 def set_clipboard_reliable(text):
+    """Attempt clipboard delivery without changing Android foreground apps."""
     try:
-        cp = subprocess.run([CLIP], input=text, text=True, capture_output=True, timeout=5)
-        vg = subprocess.run([CLIP_GET], capture_output=True, text=True, timeout=5)
-        if vg.returncode == 0 and vg.stdout.rstrip('\n') == text.rstrip('\n'):
-            return True
+        copied = subprocess.run(
+            [CLIP], input=text, text=True, capture_output=True, timeout=5,
+        )
+        if copied.returncode != 0:
+            return False
+        verified = subprocess.run(
+            [CLIP_GET], capture_output=True, text=True, timeout=5,
+        )
+        return (
+            verified.returncode == 0
+            and verified.stdout.rstrip('\\n') == text.rstrip('\\n')
+        )
     except Exception:
         pass
-    # If background clipboard access was blocked by Android, use seamless ADB focus assist
-    try:
-        subprocess.run(['adb', 'shell', 'am', 'start', '-n', 'com.termux/.app.TermuxActivity'], capture_output=True, timeout=5)
-        time.sleep(0.35)
-        subprocess.run([CLIP], input=text, text=True, capture_output=True, timeout=5)
-        time.sleep(0.1)
-        vg2 = subprocess.run([CLIP_GET], capture_output=True, text=True, timeout=5)
-        subprocess.run(['adb', 'shell', 'am', 'start', '-n', 'com.android.chrome/com.google.android.apps.chrome.Main'], capture_output=True, timeout=5)
-        if vg2.returncode == 0 and vg2.stdout.rstrip('\n') == text.rstrip('\n'):
-            return True
-    except Exception:
-        pass
+    # Android 10+ may block background clipboard access. Do not use
+    # adb shell am start to foreground Termux or Chrome as a workaround.
+    # The result is still saved locally (and normally synced to Google Docs).
     return False
 
 
@@ -226,13 +226,15 @@ def notify_start(request_id, request):
         pass
 
 
-def deliver(request_id, result, result_dir, *, clipboard=True, doc_synced=False):
+def deliver(request_id, result, result_dir, *, clipboard=True, doc_synced=False, notify=True):
     text = 'ECLIPSE BRIDGE RESULT ' + request_id + '\n' + json.dumps(result, ensure_ascii=False, indent=2)
     output = result_dir / (request_id + '.txt')
     output.write_text(text, encoding='utf-8'); output.chmod(0o600)
     
     copied = set_clipboard_reliable(text) if clipboard else False
-    
+    if not notify:
+        return copied, output
+
     summary = result.get('status', 'done')
     if result.get('action') == 'run' and isinstance(result.get('result'), dict) and 'exit_code' in result['result']:
         summary = f"exit {result['result']['exit_code']}"
@@ -304,12 +306,16 @@ def main():
                             print(f'Refused changed request with reused ID: {ident}', flush=True)
                         continue
                     action = request.get('action')
-                    notify_start(ident, request)
+                    # Silent diagnostics suppress toasts/high-priority notifications,
+                    # while preserving the Google Docs result and local receipt.
+                    silent = request.get('silent') is True
+                    if not silent:
+                        notify_start(ident, request)
                     if action == 'run' and args.execution == 'confirm':
                         print(f'\nRequest {ident}, cwd {request.get("cwd", ROOT)}:\n{request.get("script", "")}')
                         if input('Run this command locally? [y/N]: ').strip().lower() != 'y':
                             state[ident] = {'sha256': fingerprint, 'status': 'declined'}; save_json(state_path, state)
-                            deliver(ident, {'status': 'declined'}, results)
+                            deliver(ident, {'status': 'declined'}, results, notify=not silent)
                             continue
                     state[ident] = {'sha256': fingerprint, 'status': 'running'}; save_json(state_path, state)
                     try:
@@ -326,7 +332,7 @@ def main():
                             if isinstance(new_meta, dict) and new_meta.get('revisionId'):
                                 last_revision = new_meta['revisionId']
                     copied, output = deliver(ident, result, results, clipboard=args.no_sync_doc,
-                                             doc_synced=synced)
+                                             doc_synced=synced, notify=not silent)
                     channel = "Google Doc latest slot" if synced else ("clipboard" if copied else "local result only")
                     print(f'{ident}: {result["status"]}; delivered via {channel}; saved to {output}', flush=True)
             except KeyboardInterrupt:
