@@ -1,0 +1,38 @@
+name: Bridge offline no-focus regression
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile bridge code
+        run: python -m py_compile watch.py latest_response_slot.py bridge_ui.py test_watch.py test_latest_response_slot.py
+      - name: Run provider-free bridge tests
+        run: |
+          python - <<'PY'
+          import sys
+          import types
+          import unittest
+          # The watcher only imports ECLIPSE's GoogleDocsClient; unit tests
+          # replace it with deterministic in-memory test doubles.
+          core = types.ModuleType("chat_docs_core")
+          core.GoogleDocsClient = type("GoogleDocsClient", (), {})
+          sys.modules["chat_docs_core"] = core
+          suite = unittest.defaultTestLoader.loadTestsFromNames([
+              "test_watch", "test_latest_response_slot",
+          ])
+          result = unittest.TextTestRunner(verbosity=1).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY
