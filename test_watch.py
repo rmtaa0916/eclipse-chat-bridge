@@ -49,6 +49,25 @@ class BridgeTests(unittest.TestCase):
                 self.assertIn(watch.NOTIFY, commands)
 
 
+    def test_clipboard_failure_does_not_switch_android_apps(self):
+        with patch.object(watch.subprocess, 'run') as run:
+            run.return_value = type('Result', (), {'returncode': 1, 'stdout': ''})()
+            self.assertFalse(watch.set_clipboard_reliable('example'))
+            commands = [c.args[0] for c in run.call_args_list]
+            self.assertEqual(commands, [[watch.CLIP]])
+            self.assertFalse(any('adb' in c or 'am' in c for c in commands))
+
+    def test_clipboard_readback_mismatch_does_not_launch_chrome(self):
+        with patch.object(watch.subprocess, 'run') as run:
+            run.side_effect = [
+                type('Result', (), {'returncode': 0, 'stdout': ''})(),
+                type('Result', (), {'returncode': 0, 'stdout': 'different'})(),
+            ]
+            self.assertFalse(watch.set_clipboard_reliable('example'))
+            commands = [c.args[0] for c in run.call_args_list]
+            self.assertEqual(commands, [[watch.CLIP], [watch.CLIP_GET]])
+            self.assertFalse(any('adb' in c or 'am' in c for c in commands))
+
     def test_script_limit_accepts_18kb_and_rejects_over_24kb(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
