@@ -21,7 +21,7 @@ jobs:
         run: python -m py_compile watch.py latest_response_slot.py bridge_ui.py test_watch.py test_latest_response_slot.py
       - name: Run provider-free bridge tests
         run: |
-          python - <<'PY'
+          ECLIPSE_CORE_DIR="$PWD" python - <<'PY'
           import sys
           import types
           import unittest
