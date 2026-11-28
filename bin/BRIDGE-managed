@@ -1,0 +1,200 @@
+#!/data/data/com.termux/files/usr/bin/python3
+"""Native Termux entry point for the unified ECLIPSE bridge."""
+from __future__ import annotations
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+PREFIX = Path(os.environ.get("ECLIPSE_TERMUX_PREFIX", "/data/data/com.termux/files/usr"))
+ROOT = os.environ.get("ECLIPSE_BRIDGE_ROOT", "/root/projects/eclipse-chat-bridge")
+SERVICE = PREFIX / "var/service/eclipse-bridge"
+
+
+def command(argv, timeout=20):
+    try:
+        return subprocess.run(argv, text=True, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def ensure_started() -> bool:
+    if not (PREFIX / "bin/sv").exists() or not (SERVICE / "run").exists():
+        print("Bridge service not installed. Check Termux Services.", file=sys.stderr)
+        return False
+    wake = PREFIX / "bin/termux-wake-lock"
+    if wake.exists():
+        command([str(wake)], timeout=8)
+    status = command([str(PREFIX / "bin/sv"), "status", str(SERVICE)], timeout=6)
+    if status is None or status.returncode != 0 or not status.stdout.startswith("run:"):
+        command([str(PREFIX / "bin/sv"), "up", str(SERVICE)], timeout=8)
+        status = command([str(PREFIX / "bin/sv"), "status", str(SERVICE)], timeout=6)
+    if status is None or status.returncode != 0 or not status.stdout.startswith("run:"):
+        startup = PREFIX / "etc/profile.d/start-services.sh"
+        native_sh = PREFIX / "bin/sh"
+        if startup.is_file() and native_sh.exists():
+            command([str(native_sh), "-c", '. "' + str(startup) + '"'], timeout=8)
+            command([str(PREFIX / "bin/sv"), "up", str(SERVICE)], timeout=8)
+            status = command([str(PREFIX / "bin/sv"), "status", str(SERVICE)], timeout=6)
+    if status is None or status.returncode != 0 or not status.stdout.startswith("run:"):
+        print("Bridge service is not running; check runit/Termux Services.", file=sys.stderr)
+        return False
+    return True
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("-h", "--help"):
+        print("BRIDGE [start|status|doctor|logs|ui|setup|run|supervise]")
+        print("BRIDGE             Start/check service and open menu")
+        print("BRIDGE start       Start/check one supervised service")
+        print("BRIDGE status      Show running watcher and heartbeat")
+        print("BRIDGE doctor      Read-only diagnostics")
+        print("BRIDGE logs        Last service log entries")
+        print("BRIDGE ui          Existing live monitor")
+        print("BRIDGE setup       Setup readiness and limitations")
+        print("BRIDGE run         Direct watcher (blocked if already running)")
+        print("BRIDGE supervise   Service-only guardian")
+        return 0
+    mode = argv[0] if argv else "menu"
+    if mode not in ("menu", "start", "status", "doctor", "logs", "ui", "setup", "run", "supervise"):
+        print("Unknown action. Try BRIDGE --help.", file=sys.stderr)
+        return 2
+    if mode in ("menu", "start") and not ensure_started():
+        return 1
+    if mode == "start":
+        print("Bridge service is supervised and running.")
+        return 0
+    cmd = [str(PREFIX / "bin/proot-distro"), "login", "debian",
+           "--", "/usr/bin/python3", "-u", str(Path(ROOT) / "bridge.py"), *(argv or ["menu"])]
+    try:
+        return subprocess.call(cmd)
+    except OSError as exc:
+        print("Cannot access Debian bridge:", type(exc).__name__, file=sys.stderr)
+        return 1
+
+
+
+# Managed lifecycle for the no-argument BRIDGE console.
+import fcntl as _lc_fcntl
+import os as _lc_os
+import pathlib as _lc_pathlib
+import re as _lc_re
+import signal as _lc_signal
+import sqlite3 as _lc_sqlite
+import subprocess as _lc_subprocess
+import sys as _lc_sys
+import time as _lc_time
+_LC_ROOT='/data/data/com.termux/files/usr'
+_LC_SERVICE=_LC_ROOT+'/var/service/eclipse-bridge'
+_LC_SV=_LC_ROOT+'/bin/sv'
+_LC_DB=_LC_ROOT+'/var/lib/proot-distro/containers/debian/rootfs/root/.local/state/eclipse-chat-bridge/bridge_queue.db'
+_LC_DEFAULT=len(_lc_sys.argv)==1
+def _lc_sv(*args):
+    return _lc_subprocess.run([_LC_SV,*args,_LC_SERVICE],capture_output=True,text=True,timeout=18)
+def _lc_status():
+    r=_lc_sv('status')
+    if r.returncode:raise RuntimeError('service status unavailable')
+    line=r.stdout.split(';',1)[0]
+    if line.startswith('down:'):return None
+    m=_lc_re.search(r'^run: .*?\(pid (\d+)\)',line)
+    if not m:raise RuntimeError('unknown service state')
+    return int(m.group(1))
+def _lc_idle():
+    with _lc_sqlite.connect(_lc_pathlib.Path(_LC_DB).as_uri()+'?mode=ro',uri=True,timeout=2) as c:
+        return c.execute("select count(*) from queue where status in ('RUNNING','QUEUED')").fetchone()[0]==0
+def _lc_proc(pid):
+    try:
+        p=_lc_pathlib.Path('/proc')/str(pid)
+        args=(p/'cmdline').read_bytes().split(b'\0')
+        status=(p/'status').read_text()
+        parent=int(_lc_re.search(r'(?m)^PPid:\s+(\d+)',status).group(1))
+        return parent,args
+    except (OSError,ValueError,AttributeError):return None
+def _lc_descendant(pid,ancestor):
+    seen=set()
+    while pid>1 and pid not in seen:
+        if pid==ancestor:return True
+        seen.add(pid);row=_lc_proc(pid)
+        if row is None:return False
+        pid=row[0]
+    return False
+def _lc_watchers():
+    out=[]
+    for p in _lc_pathlib.Path('/proc').iterdir():
+        if not p.name.isdigit():continue
+        row=_lc_proc(int(p.name))
+        if row and b'/root/projects/eclipse-chat-bridge/watch.py' in row[1] and row[1] and row[1][0].endswith((b'python3',b'python')):
+            out.append(int(p.name))
+    return out
+def _lc_safe_service(pid):
+    row=_lc_proc(pid)
+    return bool(row and row[1] and any(x.endswith(b'/proot') for x in row[1][:2]) and any(b'/root/projects/eclipse-chat-bridge/bridge.py supervise --service' in x for x in row[1]))
+def _lc_shutdown():
+    # Fail closed on unknown queue state, another watcher owner or service identity.
+    try:
+        deadline=_lc_time.monotonic()+20
+        while not _lc_idle():
+            if _lc_time.monotonic()>=deadline:
+                print('BRIDGE: active or queued work; service left running.',flush=True);return False
+            _lc_time.sleep(1)
+        pid=_lc_status()
+        if pid is None:
+            return not _lc_watchers()
+        watchers=_lc_watchers()
+        if not _lc_safe_service(pid) or any(not _lc_descendant(w,pid) for w in watchers):
+            print('BRIDGE: service ownership uncertain; left running.',flush=True);return False
+        if not _lc_idle():return False
+        try:_lc_sv('-w','8','down')
+        except _lc_subprocess.TimeoutExpired:pass
+        current=_lc_status()
+        if current is None:
+            stopped=not _lc_watchers()
+            print('BRIDGE: all managed watchers stopped.' if stopped else 'BRIDGE: remaining watcher detected; no unverified kill.',flush=True)
+            return stopped
+        if current!=pid or not _lc_safe_service(pid) or not _lc_idle():
+            print('BRIDGE: stop incomplete; no forced shutdown.',flush=True);return False
+        for w in _lc_watchers():
+            row=_lc_proc(w)
+            if row and b'/root/projects/eclipse-chat-bridge/watch.py' in row[1] and _lc_descendant(w,pid):
+                try:_lc_os.kill(w,_lc_signal.SIGTERM)
+                except ProcessLookupError:pass
+        _lc_time.sleep(3)
+        current=_lc_status()
+        if current==pid and _lc_safe_service(pid) and _lc_idle() and not _lc_watchers():
+            try:_lc_sv('-w','8','force-stop')
+            except _lc_subprocess.TimeoutExpired:pass
+        stopped=_lc_status() is None and not _lc_watchers()
+        print('BRIDGE: all managed watchers stopped.' if stopped else 'BRIDGE: shutdown incomplete; service state requires inspection.',flush=True)
+        return stopped
+    except Exception as e:
+        print('BRIDGE: shutdown not verified ('+type(e).__name__+'); no further force.',flush=True)
+        return False
+def _lc_managed_main():
+    if not _LC_DEFAULT:return main()
+    lockdir=_lc_pathlib.Path.home()/'.cache'
+    lockdir.mkdir(mode=0o700,parents=True,exist_ok=True)
+    with (lockdir/'eclipse-bridge-console.lock').open('a') as lock:
+        try:_lc_fcntl.flock(lock,_lc_fcntl.LOCK_EX|_lc_fcntl.LOCK_NB)
+        except BlockingIOError:
+            print('BRIDGE: another managed console is open.',flush=True);return 1
+        try:
+            rc=main()
+        except KeyboardInterrupt:
+            rc=130
+        except SystemExit as exc:
+            rc=exc.code
+        if rc in (None,0,130,-2):
+            previous=_lc_signal.signal(_lc_signal.SIGINT,_lc_signal.SIG_IGN)
+            try:stopped=_lc_shutdown()
+            finally:_lc_signal.signal(_lc_signal.SIGINT,previous)
+            return 0 if stopped else 1
+        return rc
+
+if __name__ == "__main__":
+    import sys as _bridge_sys
+    if len(_bridge_sys.argv) == 1:
+        _bridge_sys.argv.append("ui")
+    elif len(_bridge_sys.argv) == 2 and _bridge_sys.argv[1] == "menu":
+        _bridge_sys.argv.pop()
+    raise SystemExit(_lc_managed_main())
