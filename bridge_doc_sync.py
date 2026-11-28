@@ -71,13 +71,28 @@ def plan(doc, provider, instructions, commit, *, bootstrap=False):
     return {'requests': requests, 'writeControl': {'requiredRevisionId': doc['revisionId']}}
 
 
+def fetch_document(client, doc_id):
+    # The watcher's get_doc uses a restricted field mask that omits title.
+    # Obtain title, identity, revision and body in the same snapshot.
+    from urllib.parse import quote
+    token = client.token_mgr.get_access_token()
+    url = ('https://docs.googleapis.com/v1/documents/' + quote(doc_id, safe='')
+           + '?fields=documentId,title,revisionId,body(content)')
+    req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
+    with client.opener.open(req, timeout=25) as reply:
+        doc = json.load(reply)
+    if doc.get('documentId') != doc_id:
+        raise ValueError('Document identity mismatch')
+    return doc
+
+
 def sync(client, doc_id, provider, instructions, commit, *, bootstrap=False, apply=False):
     if not doc_id or doc_id != os.environ.get(ENV[provider]):
         raise ValueError('Document must match configured provider ID')
     other = 'gemini' if provider == 'chatgpt' else 'chatgpt'
     if doc_id == os.environ.get(ENV[other]):
         raise ValueError('Provider IDs must be distinct')
-    doc = client.get_doc(doc_id)
+    doc = fetch_document(client, doc_id)
     patch = plan(doc, provider, instructions, commit, bootstrap=bootstrap)
     if not apply or not patch['requests']:
         return {'status': 'DRY_RUN' if not apply else 'UNCHANGED', 'operations': len(patch['requests'])}
@@ -88,7 +103,7 @@ def sync(client, doc_id, provider, instructions, commit, *, bootstrap=False, app
         ack = json.load(reply)
     if ack.get('documentId') != doc_id:
         raise RuntimeError('Update acknowledgment mismatch; inspect before retrying')
-    check = plan(client.get_doc(doc_id), provider, instructions, commit)
+    check = plan(fetch_document(client, doc_id), provider, instructions, commit)
     if check['requests']:
         raise RuntimeError('Readback mismatch; inspect before retrying')
     return {'status': 'APPLIED', 'operations': len(patch['requests'])}
