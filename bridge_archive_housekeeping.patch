@@ -1,0 +1,13 @@
+--- a/bridge_housekeeping_auto.py
++++ b/bridge_housekeeping_auto.py
+@@ -113,4 +113,10 @@
+     if ack.get("documentId")!=doc_id:raise RuntimeError("Docs did not acknowledge cleanup")
+     summary["status"]="APPLIED"
+     summary["backup"]=str(dest)
++    if apply:
++        try:
++            from bridge_archive_compression import maintain_archives
++            maintain_archives(Path(__file__).parent/"backups", replace=False, limit=1)
++        except Exception as archive_exc:
++            print("archive compression failed closed: "+type(archive_exc).__name__, flush=True)
+     return summary

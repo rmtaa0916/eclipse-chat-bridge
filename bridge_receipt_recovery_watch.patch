@@ -1,0 +1,15 @@
+--- a/watch.py
++++ b/watch.py
+@@ -412,6 +412,12 @@
+     """Atomically fetch and execute the next task in FIFO order."""
+     task = queue.fetch_next_fifo()
+     if task is None:
++        if not no_sync_doc:
++            try:
++                from bridge_receipt_recovery import recover_one
++                recover_one(client, state_path, results_dir)
++            except Exception as recovery_exc:
++                print('receipt recovery failed closed: '+type(recovery_exc).__name__, flush=True)
+         return False
+ 
+     req_id = task['id']
