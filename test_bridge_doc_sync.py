@@ -1,5 +1,8 @@
 import unittest
-from bridge_doc_sync import plan, managed_text, START, END, TITLES
+import io
+import json
+from unittest.mock import Mock
+from bridge_doc_sync import fetch_document, plan, managed_text, START, END, TITLES
 
 COMMIT = 'a' * 40
 PAYLOAD = 'Old header\n<<<ECLIPSE_BRIDGE_REQUEST_V1>>>\n{"id":"test_12345678"}\n<<<END_ECLIPSE_BRIDGE_REQUEST_V1>>>\n'
@@ -51,6 +54,18 @@ class SyncTests(unittest.TestCase):
     def test_gemini_separate_header(self):
         p = plan(doc('Gemini\n', 'gemini'), 'gemini', 'Gemini only', COMMIT, bootstrap=True)
         self.assertIn('Provider: gemini', p['requests'][0]['insertText']['text'])
+
+    def test_fetch_document_identity_and_fields(self):
+        client = Mock()
+        client.token_mgr.get_access_token.return_value = 'test-token'
+        payload = dict(doc(PAYLOAD), documentId='authorized')
+        client.opener.open.return_value = io.BytesIO(json.dumps(payload).encode())
+        self.assertEqual(fetch_document(client, 'authorized'), payload)
+        request = client.opener.open.call_args.args[0]
+        self.assertIn('fields=documentId,title,revisionId,body(content)', request.full_url)
+        client.opener.open.return_value = io.BytesIO(json.dumps(payload).encode())
+        with self.assertRaises(ValueError):
+            fetch_document(client, 'different')
 
 
 if __name__ == '__main__':
