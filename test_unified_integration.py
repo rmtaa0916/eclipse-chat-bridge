@@ -76,7 +76,7 @@ class TestUnifiedBridgeIntegration(unittest.TestCase):
              patch.object(watch, "notify_start"), \
              patch.object(watch, "deliver", side_effect=mock_deliver), \
              patch.object(watch, "sync_response_to_doc", return_value=True), \
-             patch.object(watch.sys, "argv", ["watch.py", "--once"]):
+             patch.object(watch.sys, "argv", ["watch.py", "--once", "--doc-id", "test-document", "--gemini-doc-id", ""]):
             ret = watch.main()
             self.assertEqual(ret, 0)
 
@@ -103,7 +103,7 @@ class TestUnifiedBridgeIntegration(unittest.TestCase):
              patch.object(watch, "notify_start"), \
              patch.object(watch, "deliver", return_value=(True, self.results_dir / "x")), \
              patch.object(watch, "sync_response_to_doc", return_value=True), \
-             patch.object(watch.sys, "argv", ["watch.py", "--once"]):
+             patch.object(watch.sys, "argv", ["watch.py", "--once", "--doc-id", "test-document", "--gemini-doc-id", ""]):
             ret = watch.main()
             self.assertEqual(ret, 0)
 
@@ -141,7 +141,7 @@ class TestUnifiedBridgeIntegration(unittest.TestCase):
              patch.object(watch, "deliver", return_value=(True, self.results_dir / "x")), \
              patch.object(watch, "sync_response_to_doc", side_effect=mock_sync_chatgpt), \
              patch.object(watch, "sync_gemini_response_to_doc", side_effect=mock_sync_gemini), \
-             patch.object(watch.sys, "argv", ["watch.py", "--once"]):
+             patch.object(watch.sys, "argv", ["watch.py", "--once", "--doc-id", "test-document", "--gemini-doc-id", ""]):
             ret = watch.main()
             self.assertEqual(ret, 0)
 
@@ -179,7 +179,7 @@ class TestUnifiedBridgeIntegration(unittest.TestCase):
              patch.object(watch, "notify_start"), \
              patch.object(watch, "deliver", side_effect=mock_deliver), \
              patch.object(watch, "sync_response_to_doc", return_value=True), \
-             patch.object(watch.sys, "argv", ["watch.py", "--once"]):
+             patch.object(watch.sys, "argv", ["watch.py", "--once", "--doc-id", "test-document", "--gemini-doc-id", ""]):
             ret = watch.main()
             self.assertEqual(ret, 0)
 
