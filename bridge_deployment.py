@@ -8,6 +8,7 @@ import re
 REQUIRED = frozenset({
     'watch.py', 'bridge.py', 'bridge_queue.py', 'bridge_supervisor.py',
     'bridge_housekeeping_auto.py', 'bridge_doc_sync.py', 'bridge_deployment.py',
+    'bridge_presentation.py',
     'bridge_receipt_recovery.py', 'bridge_ui.py', 'latest_response_slot.py',
     'docs/BRIDGE_CHATGPT.md', 'docs/BRIDGE_GEMINI.md', 'docs/BRIDGE_DOC_SYNC.md',
 })

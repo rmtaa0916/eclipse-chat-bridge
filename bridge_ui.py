@@ -65,7 +65,7 @@ _ORIGINAL_TERMIOS = None
 
 def restore_terminal():
     """Ensure cursor is visible and terminal is returned to normal mode."""
-    sys.stdout.write("\033[?25h\033[0m")
+    sys.stdout.write("\033[?25h\033[?7h\033[0m")
     sys.stdout.flush()
     if _ORIGINAL_TERMIOS is not None:
         try:
@@ -87,6 +87,14 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 def get_terminal_dimensions() -> tuple[int, int]:
+    # Read the live TTY first: COLUMNS/LINES may be stale after rotation or split-screen.
+    for stream in (sys.stdout, sys.stdin):
+        try:
+            if stream.isatty():
+                size = os.get_terminal_size(stream.fileno())
+                return size.columns, size.lines
+        except (OSError, AttributeError, ValueError):
+            pass
     try:
         size = shutil.get_terminal_size((80, 24))
         return size.columns, size.lines
@@ -611,7 +619,7 @@ def _bridge_v4_row(items,cols,width,height,frame):
         return [l+' '+r for l,r in zip(left,right)]
     return _bridge_v4_panel(items[0][0],items[0][1],width,height,frame,items[0][2])
 
-def build_dashboard_lines(state,frame=0,flash_message=''):
+def _bridge_dashboard_classic(state,frame=0,flash_message=''):
     import math
     state=state if isinstance(state,dict) else {}
     w,h=get_terminal_dimensions()  # read EACH redraw for live Termux resizing
@@ -719,21 +727,31 @@ def build_dashboard_lines(state,frame=0,flash_message=''):
 
 
 
+def build_dashboard_lines(state, frame=0, flash_message=''):
+    """Eclipse orbit presentation; the classic layout remains an opt-in fallback."""
+    if os.environ.get('BRIDGE_UI_STYLE') == 'classic':
+        return _bridge_dashboard_classic(state, frame, flash_message)
+    from bridge_presentation import render
+    columns, rows = get_terminal_dimensions()
+    return render(state, _bridge_v3_status(), columns, rows, frame, flash_message)
+
+
 def render_dashboard_inplace(state: dict, frame: int = 0, flash_message: str = "") -> None:
     """Render the dashboard using zero-flicker cursor home and line overwrites."""
     lines = build_dashboard_lines(state, frame, flash_message=flash_message)
-    # Cursor home \033[H, overwrite each line with \033[K (clear to EOL)
-    buffer = ["\033[H"]
-    for line in lines:
-        buffer.append(f"{line}\033[K\n")
-    # Clear any residual lines from previous longer frames
-    buffer.append("\033[J")
+    # Absolute rows and disabled autowrap also protect a frame resized mid-write.
+    buffer = ["\033[H\033[?7l"]
+    buffer.extend("\033[" + str(i + 1) + ";1H" + line + "\033[K" for i, line in enumerate(lines))
+    buffer.append("\033[J\033[?7h")
     sys.stdout.write("".join(buffer))
     sys.stdout.flush()
 
 
 def run_live_monitor(duration_seconds: float = 0) -> None:
     """Zero-flicker live animated quantum monitor with 12 FPS refresh."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        render_dashboard_inplace(get_bridge_state())
+        return
     global _ORIGINAL_TERMIOS
     start_time = time.monotonic()
     frame = 0
@@ -771,11 +789,9 @@ def run_live_monitor(duration_seconds: float = 0) -> None:
                 last_state_check = now
 
             render_dashboard_inplace(cached_state, frame)
-            sys.stdout.write(f" {YELLOW}⚡ LIVE QUANTUM MONITOR{RESET} • Press {BOLD}[ANY KEY]{RESET} or {BOLD}[Ctrl+C]{RESET} to exit monitor\033[K\n")
-            sys.stdout.flush()
 
             frame += 1
-            time.sleep(0.08)
+            time.sleep(0.5 if os.environ.get('BRIDGE_UI_REDUCED_MOTION') == '1' else 0.08)
 
     except KeyboardInterrupt:
         pass
@@ -967,7 +983,7 @@ def interactive_menu_loop():
             render_dashboard_inplace(cached_state, frame=frame, flash_message=active_flash)
             
             frame += 1
-            time.sleep(0.08)
+            time.sleep(0.5 if os.environ.get('BRIDGE_UI_REDUCED_MOTION') == '1' else 0.08)
 
     except KeyboardInterrupt:
         pass
