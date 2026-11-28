@@ -82,7 +82,7 @@ class BridgeTests(unittest.TestCase):
                 def get_doc(self, doc_id): return doc
             with patch.object(watch, 'STATE_DIR', state), patch.object(watch, 'ROOT', root), \
                  patch.object(watch, 'GoogleDocsClient', Client), patch.object(watch, 'deliver', return_value=(True, root/'x')) as deliver, \
-                 patch.object(watch.sys, 'argv', ['watch.py', '--once']):
+                 patch.object(watch.sys, 'argv', ['watch.py', '--once', '--doc-id', 'test-document', '--gemini-doc-id', '']):
                 self.assertEqual(watch.main(), 0)
                 self.assertEqual(watch.main(), 0)
                 self.assertEqual(deliver.call_count, 1)
@@ -98,7 +98,7 @@ class BridgeTests(unittest.TestCase):
                 def get_doc(self, doc_id): return doc
             with patch.object(watch, 'STATE_DIR', state), patch.object(watch, 'ROOT', root), \
                  patch.object(watch, 'GoogleDocsClient', Client), patch.object(watch, 'deliver', return_value=(True, root/'x')), \
-                 patch.object(watch.sys, 'argv', ['watch.py', '--once']), \
+                 patch.object(watch.sys, 'argv', ['watch.py', '--once', '--doc-id', 'test-document', '--gemini-doc-id', '']), \
                  patch('builtins.input', side_effect=AssertionError("input() should not be called in auto mode")):
                 self.assertEqual(watch.main(), 0)
                 state_data = json.loads((state / 'requests.json').read_text())
@@ -113,7 +113,7 @@ class BridgeTests(unittest.TestCase):
                 def get_doc(self, doc_id): return doc
             with patch.object(watch, 'STATE_DIR', state), patch.object(watch, 'ROOT', root), \
                  patch.object(watch, 'GoogleDocsClient', Client), patch.object(watch, 'deliver', return_value=(True, root/'x')), \
-                 patch.object(watch.sys, 'argv', ['watch.py', '--execution', 'confirm', '--once']), \
+                 patch.object(watch.sys, 'argv', ['watch.py', '--execution', 'confirm', '--once', '--doc-id', 'test-document', '--gemini-doc-id', '']), \
                  patch('builtins.input', return_value='n'):
                 self.assertEqual(watch.main(), 0)
                 state_data = json.loads((state / 'requests.json').read_text())
