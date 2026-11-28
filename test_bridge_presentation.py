@@ -31,7 +31,7 @@ class PresentationTests(unittest.TestCase):
     def test_idle_is_ready_without_inventing_progress(self):
         text = self.text()
         self.assertIn('READY', text)
-        self.assertIn('Ready for your next request', text)
+        self.assertIn('IDLE · waiting for requests', text)
         self.assertNotIn('%', text)
         self.assertNotIn('Working', text)
 
@@ -41,20 +41,21 @@ class PresentationTests(unittest.TestCase):
         text = self.text()
         self.assertIn('WORKING', text)
         self.assertIn('request_active', text)
-        self.assertIn('1 running', text)
-        self.assertIn('1 queued', text)
+        self.assertIn('RUN 1', text)
+        self.assertIn('WAIT 1', text)
 
     def test_stale_running_record_does_not_claim_execution(self):
         self.state['requests']['stale'] = {'status': 'running'}
         self.assertNotIn('WORKING', self.text())
 
     def test_offline_overrides_stale_running_count(self):
-        self.state['running_tasks'] = 1
+        self.state.update(running_tasks=1, running=False, watcher_count=0, process_probe='ABSENT')
         text = self.text(health={'service': 'DOWN'})
         self.assertIn('OFFLINE', text)
         self.assertNotIn('Working', text)
 
     def test_absent_health_is_not_presented_as_ready(self):
+        self.state.update(running=False, watcher_count=0, process_probe='UNKNOWN')
         self.assertIn('CHECK', self.text(health={}))
 
     def test_animation_changes_without_reordering_records(self):

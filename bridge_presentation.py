@@ -9,7 +9,7 @@ import unicodedata
 _ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))')
 _COLORS = {'ink': '38;5;252', 'muted': '38;5;244', 'line': '38;5;238',
            'ice': '38;5;117', 'glow': '38;5;223', 'good': '38;5;150',
-           'warn': '38;5;215', 'bad': '38;5;210', 'bright': '1;38;5;255'}
+           'warn': '38;5;215', 'bad': '38;5;210', 'bright': '1;38;5;255', 'violet': '38;5;147'}
 
 
 def clean(value):
@@ -86,97 +86,176 @@ def orbit(frame, width=29, height=7, active=False):
     return [''.join(paint(c, tone) for c, tone in row) for row in grid]
 
 
-def render(state, status, columns, rows, frame=0, flash_message=''):
-    """Stable responsive layout with a spare column/row to prevent terminal wrap."""
+def status_model(state, status):
+    """A stopped supervisor must not override a separately verified live watcher."""
+    local_count = state.get('watcher_count')
+    reported = number(status.get('watcher_count')) if status.get('heartbeat') == 'FRESH' else 0
+    live = number(local_count) if local_count is not None else reported
+    if not live and local_count is None and state.get('running') is True:
+        live = 1
+    running = number(state.get('running_tasks'))
+    queued = number(state.get('queued'), sum(s == 'QUEUED' for _, s in records(state)))
+    confirmed_absent = state.get('process_probe') == 'ABSENT' and local_count == 0
+    offline = not live and confirmed_absent and status.get('service') == 'DOWN'
+    mood = 'WORKING' if live and running else 'READY' if live else 'OFFLINE' if offline else 'CHECK'
+    return live, running, queued, mood
+
+
+def bridge_scene(frame, width, active=False, height=3):
+    """Compact suspension bridge, with separate request and result lanes."""
+    width = max(1, width)
+    if width < 28:
+        return []
+    left, right = max(5, width // 4), min(width - 6, width * 3 // 4)
+    top = [' '] * width
+    for x in (left, right):
+        top[x] = '╥'
+    for x in range(left + 1, right):
+        t = (x - left) / (right - left)
+        top[x] = '╲' if t < .2 else '╱' if t > .8 else '─'
+    down, up = ['─'] * width, ['─'] * width
+    for x in (left, right):
+        down[x], up[x] = '╫', '╨'
+    for row, label in [(down, 'DOCS → '), (up, 'LOCAL ← ')]:
+        row[:len(label)] = label
+    span = max(1, width - 16)
+    speed = frame // (1 if active else 4)
+    down[8 + speed % span] = '◆' if active else '·'
+    up[8 + (span - 1 - speed % span)] = '◆' if active else '·'
+    result = [paint(''.join(top), 'line'), paint(''.join(down), 'ice'), paint(''.join(up), 'violet')]
+    if height >= 5:
+        result = [paint(' ' * left + '◈' + ' ' * (right - left - 1) + '◈', 'glow'), *result,
+                  paint(fit('REQUEST → queue → local execution → durable result', width, pad=True), 'muted')]
+    return result
+
+
+def _wrap(text, width):
+    width = max(1, width)
+    out, line, used = [], '', 0
+    for c in clean(text):
+        size = cells(c)
+        if line and used + size > width:
+            out.append(line);line, used = '', 0
+        line += c;used += size
+    return out + [line] if line else out
+
+
+def panel(title, values, width, height, tone='ice'):
+    if height <= 0:
+        return []
+    if width < 5:
+        return [paint(fit(x, width, pad=True), tone) for x in [title, *values][:height]]
+    inner = width - 2
+    label = fit(' ' + title.upper() + ' ', inner)
+    result = [paint('╭' + label + '─' * max(0, inner - cells(label)) + '╮', tone)]
+    if height == 1:
+        return result
+    for i in range(max(0, height - 2)):
+        text = values[i] if i < len(values) else ''
+        result.append(paint('│', 'line') + paint(fit(' ' + text, inner, pad=True), 'ink') + paint('│', 'line'))
+    result.append(paint('╰' + '─' * inner + '╯', 'line'))
+    return result
+
+
+def render(state, status, columns, rows, frame=0, flash_message='', page=0, scroll=0):
+    """Dense operations grid; narrow screens retain all data through named views."""
     state = state if isinstance(state, dict) else {}
     status = status if isinstance(status, dict) else {}
     width, height = max(1, number(columns, 80) - 1), max(1, number(rows, 24) - 1)
-    if os.environ.get('BRIDGE_UI_REDUCED_MOTION') == '1':
-        frame = 0
-    frame = number(frame)
+    frame = 0 if os.environ.get('BRIDGE_UI_REDUCED_MOTION') == '1' else number(frame)
+    page = number(page) % 5
+    names = ['OVERVIEW', 'HISTORY', 'TASK', 'HEALTH', 'LINKS']
+    live, running, queued, mood = status_model(state, status)
+    tone = 'ice' if mood == 'WORKING' else 'good' if mood == 'READY' else 'bad' if mood == 'OFFLINE' else 'warn'
     entries = records(state)
-    running = number(state.get('running_tasks'))
-    queued = sum(s == 'QUEUED' for _, s in entries)
-    failed = sum(s in ('FAILED', 'INTERRUPTED') for _, s in entries)
-    completed = number(state.get('completed'))
-    errors = max(number(state.get('errors')), failed)
-    current = next((ident for ident, s in entries if s == 'RUNNING'), None) if running else None
-    waiting = next((ident for ident, s in entries if s == 'QUEUED'), None)
+    requests = state.get('requests', {})
+    active = next((ident for ident, label in entries if label == 'RUNNING'), None) if running else None
     service = clean(status.get('service', 'UNKNOWN'))
-    offline = service in ('DOWN', 'UNAVAILABLE') or state.get('running') is False
-    ready = service == 'RUNNING' and status.get('heartbeat') == 'FRESH' and status.get('watcher_count') == 1
-    mood = 'OFFLINE' if offline else 'WORKING' if running else 'QUEUED' if queued else 'READY' if ready else 'CHECK'
-    tone = 'bad' if offline else 'ice' if running else 'warn' if queued or not ready else 'good'
-    spinner = '·•●•'[(frame // 3) % 4]
-    headline = (spinner + ' Working' if running and not offline else '◌ Waiting in queue' if queued and not offline
-                else '○ Watcher offline' if offline else '● Ready for your next request' if ready else '○ Check service health')
-    detail = (current or 'Request ID unavailable') if running else waiting if queued else 'Persistent queue · background supervision'
-    latest = next(((ident, s) for ident, s in entries if s in ('COMPLETED', 'FAILED', 'INTERRUPTED', 'DECLINED')), None)
+    completed, failed, interrupted = number(state.get('completed')), number(state.get('errors')), number(state.get('interrupted'))
+    sup = state.get('supervisor_health') or {}
+    if not isinstance(sup, dict):sup = {}
+    sup_fresh = state.get('supervisor_fresh', status.get('heartbeat') == 'FRESH')
+    supervisor = clean(sup.get('mode') or status.get('supervisor') or 'not reported') if sup_fresh else 'STALE / NOT ATTACHED'
+    owner = clean(state.get('ownership') or ('existing watcher' if live else 'not verified'))
+    heartbeat = str(status.get('heartbeat_age_s', '—')) + 's' if status.get('heartbeat') == 'FRESH' else 'stale / unavailable'
+    recoveries = sup.get('restarts', status.get('recoveries', '—'))
+    task = state.get('task') or state.get('active_task') or status.get('task') or status.get('active_task') or {}
+    if not isinstance(task, dict):task = {'id': task}
+    task_id = clean(task.get('id') or task.get('task_id') or task.get('name') or 'Not linked')
+    phase, attempt, pending = [clean(task.get(key, 'not exposed')) for key in ('phase', 'attempt', 'pending')]
+    providers = state.get('providers') if isinstance(state.get('providers'), dict) else {}
+    links = [name + '  ' + ('configured' if providers.get(name) else 'not reported') for name in ('ChatGPT', 'Gemini')]
+    source = clean(state.get('queue_source', 'state snapshot'))
+    activity = [('RUN ' + active) if active else 'RUNNING · ID not exposed' if running else 'IDLE · waiting for requests' if live else 'Watcher not verified']
+    if not live and running:activity = ['RECORDED RUNNING · watcher not verified']
+    recent = [label.lower().ljust(11) + ' ' + ident for ident, label in entries]
+    metrics = 'RUN ' + str(running) + '  WAIT ' + str(queued) + '  DONE ' + str(completed) + '  FAIL ' + str(failed) + '  INT ' + str(interrupted)
+    items = [
+        ('WATCHER / SERVICE', ['Watcher ' + str(live) + ' · PID ' + str(state.get('pid', '—')),
+                               'Service ' + service + ' · ' + owner, 'Supervisor ' + supervisor], 'ice'),
+        ('RECENT EXECUTIONS', recent or ['No requests recorded'], 'violet'),
+        ('ECLIPSE TASK', ['Task ' + task_id, 'Phase ' + phase + ' · attempt ' + attempt, 'Pending ' + pending], 'glow'),
+        ('RECOVERY / HEALTH', ['Heartbeat ' + heartbeat, 'Recoveries ' + str(recoveries) + ' · interrupted ' + str(interrupted),
+                               'Failed ' + str(failed) + ' · queue ' + source], 'warn'),
+        ('PROVIDER LINKS', [*links, 'Durable queue + local result receipts'], 'ice'),
+        ('CONTROLS', ['BRIDGE menu · service controls', 'BRIDGE status / logs / doctor', 'Q closes view; watcher stays running'], 'violet')]
     out = []
-
-    def row(text='', style='ink'):
-        out.append(paint(fit(text, width, pad=True), style))
-
-    def rule(label=''):
-        text = (' ' + label + ' ') if label else ''
-        row(text + '─' * max(0, width - cells(text)), 'line')
-
-    title = 'ECLIPSE / BRIDGE'
-    if width < 32 or height < 12:
-        compact = [title + ' · ' + mood, headline, detail,
-                   str(running) + ' running · ' + str(queued) + ' queued',
-                   str(completed) + ' completed · ' + str(errors) + ' alerts']
-        if flash_message:
-            compact.insert(1, clean(flash_message))
-        if latest:
-            compact.append('Last ' + latest[1].lower() + ' · ' + latest[0])
-        compact.append('Q close · service stays running')
-        for i, text in enumerate(compact[:height]):
-            row(text, tone if i == 1 else 'bright' if i == 0 else 'muted')
+    def row(text='', color='ink'):
+        out.append(paint(fit(text, width, pad=True), color))
+    if width < 28 or height < 10:
+        for text in ['ECLIPSE BRIDGE · ' + mood, names[page], *activity, metrics,
+                     'Service ' + service, 'PID ' + str(state.get('pid', '—')), 'Tab views · Q close'][:height]:
+            row(text, tone)
+        if flash_message and height > 1:out[1] = paint(fit(flash_message, width), 'warn')
         return out
-
-    badge = '● ' + mood
-    gap = max(1, width - cells(title) - cells(badge) - 2)
-    # A quiet moving highlight across the title, with stable typography.
-    shine = (frame // 2) % (len(title) + 12) - 6
-    heading = ' ' + ''.join(paint(c, 'bright' if abs(i - shine) < 2 else 'muted') for i, c in enumerate(title))
-    out.append(heading + ' ' * gap + paint(badge, tone))
-    rule()
-    hero_height = 7 if height >= 22 else 5
-    scene = orbit(frame, width=29 if width >= 66 else 25, height=hero_height, active=running > 0 and not offline)
-    if width >= 66:
-        summary = [headline, '', detail, '', 'QUEUE  ' + str(running) + ' running  /  ' + str(queued) + ' waiting']
-        for i, line in enumerate(scene):
-            text = summary[i - 1] if 1 <= i <= len(summary) else ''
-            available = width - cells(line) - 4
-            out.append(line + '    ' + paint(fit(text, available, pad=True), tone if i == 1 else 'muted'))
+    title = ' ECLIPSE / BRIDGE'
+    badge = '● ' + mood + ' '
+    shine = (frame // 2) % (len(title) + 10) - 4
+    heading = ''.join(paint(c, 'bright' if abs(i - shine) < 2 else 'ice') for i, c in enumerate(title))
+    out.append(heading + ' ' * max(0, width - cells(title) - cells(badge)) + paint(badge, tone))
+    nav = '  '.join(str(i + 1) + ':' + name.title() for i, name in enumerate(names))
+    row(nav if width >= cells(nav) else str(page + 1) + '/5 ' + names[page] + ' · Tab changes view', 'violet')
+    if page == 0 and height >= 20:
+        out.extend(bridge_scene(frame, width, live and running > 0, 5 if height >= 32 else 3))
+    for text in activity:row(text, tone)
+    row(metrics, 'bright')
+    footer = '1–5 views · Tab next · J/K history · Q close' if width >= 48 else '1–5/Tab views · J/K scroll · Q close'
+    reserve = 1 + bool(flash_message)
+    room = max(0, height - len(out) - reserve)
+    if page == 0:
+        cols = 2 if width >= 72 else 1
+        slots = min(6, (room // 4) * cols)
+        # Stable priorities, never rotate diagnostics out from under the reader.
+        selected = items[:slots]
+        if selected:
+            rows_needed = (len(selected) + cols - 1) // cols
+            panel_h = room // rows_needed
+            for start in range(0, len(selected), cols):
+                group = selected[start:start + cols]
+                if cols == 2 and len(group) == 2:
+                    left_w = (width - 1) // 2;right_w = width - left_w - 1
+                    left = panel(*group[0][:2], left_w, panel_h, group[0][2])
+                    right = panel(*group[1][:2], right_w, panel_h, group[1][2])
+                    out.extend(a + ' ' + b for a, b in zip(left, right))
+                else:out.extend(panel(*group[0][:2], width, panel_h, group[0][2]))
+        elif room:
+            for text in [items[0][1][0], items[0][1][1], '2 History · 3 Task · 4 Health · 5 Links'][:room]:row(text)
     else:
-        for line in scene:
-            left = max(0, (width - cells(line)) // 2)
-            out.append(' ' * left + line + ' ' * max(0, width - left - cells(line)))
-        row(headline, tone)
-        row(detail, 'muted')
-    rule('EXECUTION')
-    row(str(running) + ' running   ' + str(queued) + ' queued   ' + str(completed) + ' completed', 'ink')
-    row(str(errors) + ' alerts · ' + str(number(state.get('total'), len(entries))) + ' recorded requests', 'muted')
-    footer = 'Q close · BRIDGE menu for controls'
-    # Keep positions stable: history does not rotate while a person reads it.
-    available = height - len(out) - 4 - bool(flash_message)
-    if available >= 2:
-        rule('RECENT ACTIVITY')
-        limit = min(3, available - 1)
-        for ident, label in entries[:limit]:
-            row(label.lower().ljust(12) + ' ' + ident, 'good' if label == 'COMPLETED' else 'warn' if label in ('FAILED', 'INTERRUPTED') else 'muted')
-        if not entries:
-            row('No requests recorded yet', 'muted')
-    if height - len(out) >= 5 + bool(flash_message):
-        rule('SYSTEM')
-        row('Service ' + service.lower() + ' · ' + clean(status.get('watcher_count', '—')) + ' watcher · heartbeat ' + clean(status.get('heartbeat_age_s', '—')) + 's', 'muted')
-    out = out[:max(0, height - 2 - bool(flash_message))]
-    if flash_message:
-        row(flash_message, 'warn')
-    while len(out) < height - 2:
-        row()
-    rule()
+        details = (recent or ['No requests recorded']) if page == 1 else [
+            'Task ID  ' + task_id, 'Phase  ' + phase, 'Attempt  ' + attempt, 'Pending  ' + pending,
+            'Bridge request  ' + (active or 'none executing')] if page == 2 else [
+            *items[0][1], *items[3][1], 'Ownership  ' + owner,
+            'Supervisor record  ' + ('fresh' if sup_fresh else 'stale; not current ownership'),
+            'Queue records  ' + str(number(state.get('total')))] if page == 3 else [
+            *links, 'ChatGPT document  ' + clean(state.get('doc_id') or 'not reported'),
+            'Gemini document  ' + clean(state.get('gemini_doc_id') or 'not reported'),
+            'Queue source  ' + source, 'Queued  ' + str(queued),
+            'Local execution; durable result recovery', *items[5][1]]
+        wrapped = [line for text in details for line in _wrap(text, max(1, width - 4))]
+        if page == 1:wrapped = wrapped[number(scroll):]
+        out.extend(panel(names[page], wrapped, width, room, 'violet' if page == 1 else 'ice'))
+    out = out[:max(0, height - reserve)]
+    if flash_message:row(flash_message, 'warn')
+    while len(out) < height - 1:row()
     row(footer, 'muted')
     return out[:height]

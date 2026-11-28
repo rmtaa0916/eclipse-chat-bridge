@@ -1,13 +1,15 @@
-# BRIDGE interface
+# BRIDGE operations dashboard
 
-The default interface uses a moving eclipse orbit, a subtle title shimmer, and a stable view of actual execution and service status. Motion is decorative and does not estimate job progress. History stays in place while reading.
+The default interface restores a dense six-panel operations grid: watcher/service, execution history, ECLIPSE task, recovery/health, provider links, and controls. The animated request/result bridge and title highlight remain separate from job progress. No simulated percentages or random telemetry are shown.
 
-The monitor measures the live terminal on every redraw. Rotation, split-screen, font-size changes, and repeated window resizing switch the layout automatically. The renderer reserves a row and column to avoid wrapping or scrolling at the bottom edge. Terminals without a TTY receive one static frame.
+The watcher is identified by a real process argument. A stopped managed service or stale supervisor heartbeat does not mark a separate live watcher offline. Queue counts and recent requests come from a read-only SQLite snapshot; the legacy JSON file is a labeled fallback. Missing process visibility means CHECK, not a fabricated offline verdict. Provider links show configuration, not unverified network connectivity. Task details show only explicitly linked metadata.
 
-- Open the installed native `BRIDGE` launcher as usual. Close and reopen an already running monitor to load this interface update.
-- Exit the monitor with any key; the background watcher continues running. Use `BRIDGE menu` for the existing service controls.
-- Set `BRIDGE_UI_REDUCED_MOTION=1` for a still illustration and slower refresh.
-- Set `NO_COLOR=1` for monochrome output.
-- Set `BRIDGE_UI_STYLE=classic` to use the previous dashboard layout. Automatic cell-width fitting applies to the default eclipse layout.
+The screen measures the actual TTY every redraw, uses bounded cell widths, absolute row addressing and guarded autowrap, and restores the alternate screen and terminal on exit. Rotation, split-screen, font-size changes, and continuous window resizing are supported.
 
-The interface reads existing local state and cached service health. It does not submit provider prompts, change queue records, or restart the watcher.
+- Close and reopen an existing monitor to load an update.
+- Press 1 for Overview, 2 for History, 3 for Task, 4 for Health, or 5 for Links. Tab changes views. J/K scroll the history view. Small terminals keep details reachable through these views.
+- Press Q, Esc, or Ctrl+C to close the monitor. Closing the view does not stop the watcher.
+- Use BRIDGE menu for the existing service controls; the monitor does not start or restart services.
+- BRIDGE_UI_REDUCED_MOTION=1 disables decorative motion and slows refresh. NO_COLOR=1 selects monochrome. BRIDGE_UI_STYLE=classic selects the earlier dashboard.
+
+Design references: btop (https://github.com/aristocratos/btop), Textual layout (https://textual.textualize.io/guide/layout/), and Rich Live (https://rich.readthedocs.io/en/stable/live.html). The implementation uses the existing Python standard library and adds no runtime packages.

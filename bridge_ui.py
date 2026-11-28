@@ -61,10 +61,17 @@ BEACON_ICONS = ("●", "◈", "○", "✦")
 
 # Terminal State Safety
 _ORIGINAL_TERMIOS = None
+_ALT_SCREEN_ACTIVE = False
+UI_VIEW = 0
+UI_SCROLL = 0
 
 
 def restore_terminal():
     """Ensure cursor is visible and terminal is returned to normal mode."""
+    global _ALT_SCREEN_ACTIVE
+    if _ALT_SCREEN_ACTIVE:
+        sys.stdout.write("\033[?1049l")
+        _ALT_SCREEN_ACTIVE = False
     sys.stdout.write("\033[?25h\033[?7h\033[0m")
     sys.stdout.flush()
     if _ORIGINAL_TERMIOS is not None:
@@ -75,6 +82,26 @@ def restore_terminal():
 
 
 atexit.register(restore_terminal)
+
+
+def enter_screen():
+    global _ALT_SCREEN_ACTIVE
+    if not _ALT_SCREEN_ACTIVE and sys.stdout.isatty():
+        sys.stdout.write("\033[?1049h")
+        _ALT_SCREEN_ACTIVE = True
+
+
+def navigation_key(ch):
+    global UI_VIEW, UI_SCROLL
+    if ch in '12345':
+        UI_VIEW, UI_SCROLL = int(ch) - 1, 0
+    elif ch == '\t':
+        UI_VIEW, UI_SCROLL = (UI_VIEW + 1) % 5, 0
+    elif ch in ('j', 'J', 'k', 'K'):
+        UI_SCROLL = max(0, UI_SCROLL + (1 if ch.lower() == 'j' else -1))
+    else:
+        return False
+    return True
 
 
 def signal_handler(sig, frame):
@@ -103,48 +130,9 @@ def get_terminal_dimensions() -> tuple[int, int]:
 
 
 def get_bridge_state() -> dict:
-    state_file = STATE_DIR / "requests.json"
-    pid_file = STATE_DIR / "watcher.pid"
-    
-    running_pid = None
-    if pid_file.is_file():
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, 0)
-            running_pid = pid
-        except Exception:
-            pass
-
-    if not running_pid:
-        try:
-            out = subprocess.check_output(["pgrep", "-f", "watch.py"], text=True).strip()
-            if out:
-                running_pid = int(out.split()[0])
-                pid_file.write_text(str(running_pid))
-        except Exception:
-            pass
-
-    requests = {}
-    if state_file.is_file():
-        try:
-            requests = json.loads(state_file.read_text())
-        except Exception:
-            pass
-
-    completed = sum(1 for v in requests.values() if v.get("status") == "completed")
-    running = sum(1 for v in requests.values() if v.get("status") == "running")
-    errors = sum(1 for v in requests.values() if v.get("status") == "error")
-
-    return {
-        "running": running_pid is not None,
-        "pid": running_pid,
-        "total": len(requests),
-        "completed": completed,
-        "running_tasks": running,
-        "errors": errors,
-        "requests": requests,
-        "doc_id": DEFAULT_DOC_ID,
-    }
+    from bridge_ui_state import read_state
+    return read_state(STATE_DIR, WATCH_SCRIPT, DEFAULT_DOC_ID,
+                      os.environ.get('ECLIPSE_GEMINI_DOC_ID', ''))
 
 
 def generate_telemetry_wave(frame: int, width: int = 32, active: bool = True) -> str:
@@ -733,7 +721,7 @@ def build_dashboard_lines(state, frame=0, flash_message=''):
         return _bridge_dashboard_classic(state, frame, flash_message)
     from bridge_presentation import render
     columns, rows = get_terminal_dimensions()
-    return render(state, _bridge_v3_status(), columns, rows, frame, flash_message)
+    return render(state, _bridge_v3_status(), columns, rows, frame, flash_message, page=UI_VIEW, scroll=UI_SCROLL)
 
 
 def render_dashboard_inplace(state: dict, frame: int = 0, flash_message: str = "") -> None:
@@ -765,6 +753,7 @@ def run_live_monitor(duration_seconds: float = 0) -> None:
 
     try:
         # Hide cursor and clear once cleanly
+        enter_screen()
         sys.stdout.write("\033[?25l\033[2J")
         sys.stdout.flush()
         
@@ -780,8 +769,10 @@ def run_live_monitor(duration_seconds: float = 0) -> None:
             if sys.stdin.isatty():
                 r, _, _ = select.select([sys.stdin], [], [], 0)
                 if r:
-                    sys.stdin.read(1)
-                    break
+                    ch = sys.stdin.read(1)
+                    if ch in ('q', 'Q', '\x03', '\x1b'):
+                        break
+                    navigation_key(ch)
 
             # Poll real disk state every 1.5 seconds
             if now - last_state_check > 1.5:
@@ -804,6 +795,7 @@ def play_startup_sequence():
     if not sys.stdout.isatty():
         return
     try:
+        enter_screen()
         sys.stdout.write("\033[?25l\033[2J")
         sys.stdout.flush()
         state = get_bridge_state()
@@ -836,6 +828,7 @@ def interactive_menu_loop():
 
     try:
         # Hide cursor and clear once cleanly
+        enter_screen()
         sys.stdout.write("\033[?25l\033[2J")
         sys.stdout.flush()
 
@@ -857,6 +850,8 @@ def interactive_menu_loop():
                     ch = sys.stdin.read(1)
                     if ch in ("\x03", "\x1b", "q", "Q"):  # Ctrl+C, Esc, Q
                         break
+                    elif navigation_key(ch):
+                        pass
                     elif ch in ("s", "S"):
                         restore_terminal()
                         print(f"\n{CYAN}{BOLD}=== ECLIPSE CHAT BRIDGE STATUS ==={RESET}")
@@ -871,6 +866,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()
@@ -884,6 +880,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()
@@ -899,6 +896,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()
@@ -914,6 +912,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()
@@ -928,6 +927,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()
@@ -941,6 +941,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()
@@ -953,6 +954,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()
@@ -970,6 +972,7 @@ def interactive_menu_loop():
                             tty.setcbreak(sys.stdin.fileno())
                         except Exception:
                             pass
+                        enter_screen()
                         sys.stdout.write("\033[?25l\033[2J")
                         sys.stdout.flush()
                         cached_state = get_bridge_state()

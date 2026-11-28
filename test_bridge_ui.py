@@ -43,8 +43,7 @@ class BridgeUITests(unittest.TestCase):
             (state_dir / "requests.json").write_text(json.dumps(requests))
             (state_dir / "watcher.pid").write_text("99999999")
             with patch.object(bridge_ui, "STATE_DIR", state_dir), \
-                 patch("os.kill", side_effect=ProcessLookupError), \
-                 patch("subprocess.check_output", side_effect=subprocess.CalledProcessError(1, ["pgrep"])):
+                 patch("bridge_ui_state.probe_watchers", return_value=([], {}, 'ABSENT')):
                 st = bridge_ui.get_bridge_state()
                 self.assertEqual(st["total"], 4)
                 self.assertEqual(st["completed"], 2)
