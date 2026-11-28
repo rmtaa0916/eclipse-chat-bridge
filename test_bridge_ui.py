@@ -66,12 +66,21 @@ class BridgeUITests(unittest.TestCase):
         with patch.object(bridge_ui, "get_terminal_dimensions", return_value=(80, 24)), \
              patch("sys.stdout.write") as mock_write, \
              patch("sys.stdout.flush"):
-            bridge_ui.render_dashboard_inplace(state, frame=0)
+            bridge_ui.render_dashboard_inplace(state, frame=0, flash_message="[TEST FLASH]")
             written = "".join(call.args[0] for call in mock_write.call_args_list)
             # Must use in-place cursor home \033[H
             self.assertIn("\033[H", written)
             # Must NOT call clear screen \033[2J
             self.assertNotIn("\033[2J", written)
+            # Must include flash message
+            self.assertIn("[TEST FLASH]", written)
+
+    def test_non_tty_menu_fallback(self):
+        with patch("sys.stdin.isatty", return_value=False), \
+             patch("sys.stdout.isatty", return_value=False), \
+             patch("bridge_ui.render_dashboard_inplace") as mock_render:
+            bridge_ui.interactive_menu_loop()
+            mock_render.assert_called_once()
 
 
 if __name__ == "__main__":

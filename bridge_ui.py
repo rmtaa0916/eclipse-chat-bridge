@@ -52,7 +52,7 @@ ORANGE = "" if NO_COLOR else "\033[38;5;208m"
 # State & Config
 STATE_DIR = Path(os.environ.get("ECLIPSE_BRIDGE_STATE", "/root/.local/state/eclipse-chat-bridge"))
 WATCH_SCRIPT = Path(__file__).resolve().parent / "watch.py"
-DEFAULT_DOC_ID = os.environ.get("ECLIPSE_DOC_ID", "1N_TYeHUTexHaU2eiZ40hMWsaNNl-GaZJ-6H1MxHPPYM")
+DEFAULT_DOC_ID = os.environ.get("ECLIPSE_DOC_ID", "")
 
 # Telemetry Wave & Spinner Glyphs
 WAVE_GLYPHS = (" ", "▂", "▃", "▄", "▅", "▆", "▇", "█")

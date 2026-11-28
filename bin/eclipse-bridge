@@ -14,6 +14,10 @@ LOG_FILE="${STATE_DIR}/watcher.log"
 PID_FILE="${STATE_DIR}/watcher.pid"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DOC_ID="${ECLIPSE_DOC_ID:-1N_TYeHUTexHaU2eiZ40hMWsaNNl-GaZJ-6H1MxHPPYM}"
+GEMINI_DOC_CONFIG="/root/projects/gemini-chat-bridge/.gemini-bridge-doc.json"
+if [[ -z "${ECLIPSE_GEMINI_DOC_ID:-}" ]] && [[ -f "${GEMINI_DOC_CONFIG}" ]]; then
+  ECLIPSE_GEMINI_DOC_ID="$("${PYTHON_BIN}" -c "import json; print(json.load(open('${GEMINI_DOC_CONFIG}'))['doc_id'])" 2>/dev/null || true)"
+fi
 
 mkdir -p "${STATE_DIR}"
 
@@ -65,7 +69,14 @@ cmd_start() {
   fi
 
   echo "Starting ECLIPSE Chat Bridge daemon..."
-  nohup "${PYTHON_BIN}" "${WATCH_SCRIPT}" "$@" >> "${LOG_FILE}" 2>&1 &
+  local extra_args=()
+  if [[ ! " $* " =~ " --housekeeping " ]]; then
+    extra_args+=("--housekeeping")
+  fi
+  if [[ -n "${ECLIPSE_GEMINI_DOC_ID:-}" ]] && [[ ! " $* " =~ " --gemini-doc-id " ]]; then
+    extra_args+=("--gemini-doc-id" "${ECLIPSE_GEMINI_DOC_ID}")
+  fi
+  nohup "${PYTHON_BIN}" "${WATCH_SCRIPT}" "${extra_args[@]}" "$@" >> "${LOG_FILE}" 2>&1 &
   local new_pid=$!
   echo "${new_pid}" > "${PID_FILE}"
   sleep 1
@@ -108,9 +119,25 @@ cmd_status() {
   local pid
   if pid="$(get_running_pid)"; then
     echo "${BOLD}Status:${RESET} ${GREEN}RUNNING${RESET} (PID: ${pid})"
-    echo "${BOLD}Doc ID:${RESET} ${CYAN}${DOC_ID}${RESET}"
+    echo "${BOLD}ChatGPT Doc ID:${RESET} ${CYAN}${DOC_ID}${RESET}"
+    if [[ -n "${ECLIPSE_GEMINI_DOC_ID:-}" ]]; then
+      echo "${BOLD}Gemini Doc ID:${RESET}  ${CYAN}${ECLIPSE_GEMINI_DOC_ID}${RESET}"
+    fi
     echo "${BOLD}State Directory:${RESET} ${STATE_DIR}"
     echo "${BOLD}Log File:${RESET} ${LOG_FILE}"
+    if [[ -f "${STATE_DIR}/bridge_queue.db" ]]; then
+      "${PYTHON_BIN}" -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+try:
+    from bridge_queue import BridgeQueue
+    q = BridgeQueue('${STATE_DIR}/bridge_queue.db')
+    stats = q.get_stats()
+    print(f'Queue Stats: {stats[\"total\"]} total | {stats[\"completed\"]} completed | {stats[\"queued\"]} queued | {stats[\"running\"]} running | {stats[\"failed\"]} failed')
+except Exception:
+    pass
+" 2>/dev/null || true
+    fi
     if [[ -f "${STATE_DIR}/requests.json" ]]; then
       "${PYTHON_BIN}" -c "
 import json
@@ -134,8 +161,24 @@ except Exception as e:
     fi
   else
     echo "${BOLD}Status:${RESET} ${RED}STOPPED${RESET}"
-    echo "${BOLD}Doc ID:${RESET} ${CYAN}${DOC_ID}${RESET}"
+    echo "${BOLD}ChatGPT Doc ID:${RESET} ${CYAN}${DOC_ID}${RESET}"
+    if [[ -n "${ECLIPSE_GEMINI_DOC_ID:-}" ]]; then
+      echo "${BOLD}Gemini Doc ID:${RESET}  ${CYAN}${ECLIPSE_GEMINI_DOC_ID}${RESET}"
+    fi
     echo "${BOLD}State Directory:${RESET} ${STATE_DIR}"
+    if [[ -f "${STATE_DIR}/bridge_queue.db" ]]; then
+      "${PYTHON_BIN}" -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+try:
+    from bridge_queue import BridgeQueue
+    q = BridgeQueue('${STATE_DIR}/bridge_queue.db')
+    stats = q.get_stats()
+    print(f'Queue Stats: {stats[\"total\"]} total | {stats[\"completed\"]} completed | {stats[\"queued\"]} queued | {stats[\"running\"]} running | {stats[\"failed\"]} failed')
+except Exception:
+    pass
+" 2>/dev/null || true
+    fi
     if [[ -f "${STATE_DIR}/requests.json" ]]; then
       "${PYTHON_BIN}" -c "
 import json
@@ -176,7 +219,7 @@ cmd_run() {
 cmd_test() {
   echo "${BOLD}Running test suite for ECLIPSE Chat Bridge...${RESET}"
   cd "${SCRIPT_DIR}"
-  "${PYTHON_BIN}" -m unittest -v test_watch.py test_latest_response_slot.py test_bridge_ui.py
+  ECLIPSE_GEMINI_DOC_ID="" "${PYTHON_BIN}" -m unittest -v test_watch.py test_latest_response_slot.py test_bridge_ui.py test_bridge_queue.py test_gemini_protocol.py test_unified_integration.py
 }
 
 cmd_help() {

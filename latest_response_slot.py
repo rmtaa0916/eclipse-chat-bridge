@@ -54,7 +54,7 @@ def _location(rows, offset):
             return doc_start + _u16(chunk[:offset-offset_start])
     raise SlotError("Slot marker index cannot be resolved.")
 
-MAX_SLOT_RESULT_LEN = 1800
+MAX_SLOT_RESULT_LEN = 650
 
 def _bound_slot_result(result, max_len=MAX_SLOT_RESULT_LEN):
     """Ensure result fits comfortably inside slot without blowing Docs API document limits."""
@@ -68,19 +68,19 @@ def _bound_slot_result(result, max_len=MAX_SLOT_RESULT_LEN):
     sub = bounded.get("result")
     if isinstance(sub, dict):
         sub_copy = dict(sub)
-        if isinstance(sub_copy.get("output"), str) and len(sub_copy["output"]) > 800:
+        if isinstance(sub_copy.get("output"), str) and len(sub_copy["output"]) > 250:
             out = sub_copy["output"]
-            sub_copy["output"] = out[:400] + "\n... [truncated for slot display] ...\n" + out[-350:]
+            sub_copy["output"] = out[:120] + "\n... [truncated] ...\n" + out[-100:]
             sub_copy["truncated"] = True
-        if isinstance(sub_copy.get("entries"), list) and len(sub_copy["entries"]) > 15:
+        if isinstance(sub_copy.get("entries"), list) and len(sub_copy["entries"]) > 5:
             entries = sub_copy["entries"]
             sub_copy["total_entries"] = len(entries)
-            sub_copy["sample_entries"] = entries[:15]
+            sub_copy["sample_entries"] = entries[:5]
             sub_copy.pop("entries", None)
             sub_copy["truncated"] = True
-        if isinstance(sub_copy.get("content"), str) and len(sub_copy["content"]) > 800:
+        if isinstance(sub_copy.get("content"), str) and len(sub_copy["content"]) > 250:
             cont = sub_copy["content"]
-            sub_copy["content"] = cont[:400] + "\n... [truncated for slot display] ...\n" + cont[-350:]
+            sub_copy["content"] = cont[:120] + "\n... [truncated] ...\n" + cont[-100:]
             sub_copy["truncated"] = True
         bounded["result"] = sub_copy
 
@@ -93,7 +93,7 @@ def _bound_slot_result(result, max_len=MAX_SLOT_RESULT_LEN):
             "status": bounded.get("status", "completed"),
             "action": bounded.get("action", "unknown"),
             "truncated": True,
-            "note": "Output exceeds Google Docs slot capacity; full raw output preserved locally",
+            "note": "Output bounded to protect Google Doc capacity; raw output saved locally",
             "full_output_file": raw_file,
         }
     return bounded

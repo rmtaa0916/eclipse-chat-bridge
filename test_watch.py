@@ -145,12 +145,12 @@ class BridgeTests(unittest.TestCase):
                     self.get_doc_calls = 0
                 def get_doc(self, doc_id):
                     self.get_doc_calls += 1
-                    return {'body': {'content': []}}
+                    return {'revisionId': 'rev1', 'body': {'content': []}}
             c = Client()
             with patch.object(watch, 'STATE_DIR', state), patch.object(watch, 'ROOT', root), \
                  patch.object(watch, 'GoogleDocsClient', lambda: c), \
                  patch.object(watch, 'get_doc_metadata', return_value={'revisionId': 'rev1'}), \
-                 patch.object(watch.sys, 'argv', ['watch.py', '--once']):
+                 patch.object(watch.sys, 'argv', ['watch.py', '--once', '--doc-id', 'test-document', '--gemini-doc-id', '']):
                 watch.main()
                 self.assertEqual(c.get_doc_calls, 1)
 

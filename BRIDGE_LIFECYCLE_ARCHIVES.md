@@ -14,6 +14,6 @@ The housekeeping integration patch targets the installed queue-based watcher arc
 older Git baselines may require the queue and housekeeping dependencies first.
 The actual service must reload the updated module before the hook becomes active.
 
-## Experimental branch compatibility
+## Experimental architecture
 
-The legacy experimental watcher does not yet contain the queue, automatic housekeeping, or unified supervisor architecture required by the integration patches. The modules, managed launcher, and tests are included for development; the patches are not applied and do not enable automatic recovery or compression on this legacy branch. Integrate the newer queue-based architecture and validate the hooks before deployment.
+The queue-based watcher, housekeeping, supervisor and supporting modules are now present. The receipt recovery and archive compression hooks are integrated into their source files. The historical patch files are retained as development records, not as additional installation steps. Set ECLIPSE_DOC_ID and ECLIPSE_BRIDGE_RECOVERY_DOC_ID explicitly for the authorized primary document, and optionally ECLIPSE_GEMINI_DOC_ID for the secondary document. Archive compression retains original JSON by default. Unit tests do not establish live operation of a fresh installation.
